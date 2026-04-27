@@ -8,38 +8,43 @@ export default {
       center: true,
     },
     extend: {
+      fontFamily: {
+        sans: ['Inter', 'sans-serif'],
+      },
       colors: {
         brand: {
-          500: '#4a7c59',
-          400: '#7ba662',
-          100: '#d4e4d9',
-          700: '#3f6a4c',
+          500: '#10b981', // Emerald 500
+          400: '#34d399', // Emerald 400
+          100: '#d1fae5', // Emerald 100
+          700: '#047857', // Emerald 700
         },
         ink: {
-          900: '#2d3319',
-          600: '#6b7160',
-          100: '#e8ebe5',
-          400: '#9ca398',
+          900: '#0f172a', // Slate 900
+          600: '#475569', // Slate 600
+          100: '#f1f5f9', // Slate 100
+          400: '#94a3b8', // Slate 400
         },
         neutral: {
-          100: '#f4f1e8',
-          200: '#e8e6dd',
-          300: '#cbced4',
+          100: '#ffffff', // Pure white
+          200: '#f8fafc', // Very light slate
+          300: '#e2e8f0', // Slate 200
         },
         semantic: {
-          danger: '#c44536',
-          dangerDark: '#d45949',
-          warning: '#c9a959',
-          info: '#5a8aa5',
-          success: '#7ba662',
+          danger: '#ef4444',
+          dangerDark: '#f87171',
+          warning: '#f59e0b',
+          info: '#3b82f6',
+          success: '#10b981',
         },
       },
       backgroundImage: {
-        'app-light': 'linear-gradient(135deg, #f8faf6 0%, #f0f4e8 40%, #e8f2dc 100%)',
-        'app-dark': 'linear-gradient(135deg, #1a1f16 0%, #1e2318 40%, #22281c 100%)',
+        // Replacing legacy gradients with flat colors for clean look
+        'app-light': 'linear-gradient(to bottom, #f8fafc, #f8fafc)',
+        'app-dark': 'linear-gradient(to bottom, #0f172a, #0f172a)',
       },
       boxShadow: {
-        glass: '0 10px 30px rgba(0, 0, 0, 0.10)',
+        glass: '0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03)',
+        card: '0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)',
       },
       borderRadius: {
         xl2: '20px',

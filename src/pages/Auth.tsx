@@ -2,6 +2,8 @@ import { useMemo, useState } from 'react'
 import { Leaf, Loader2 } from 'lucide-react'
 import { supabase } from '@/lib/supabaseClient'
 import { useNavigate } from 'react-router-dom'
+import { cn } from '@/lib/utils'
+import { GlassCard } from '@/components/GlassCard'
 
 type Mode = 'signin' | 'signup'
 
@@ -75,82 +77,84 @@ export default function Auth() {
   }
 
   return (
-    <div className="min-h-full bg-app-light text-ink-900 dark:bg-app-dark dark:text-ink-100">
-      <div className="mx-auto flex min-h-full max-w-[1200px] items-center justify-center px-6 py-10">
-        <div className="w-full max-w-[440px] rounded-xl2 border border-black/5 bg-white/85 p-6 shadow-glass backdrop-blur dark:border-white/10 dark:bg-[rgba(36,41,31,0.85)]">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-100 text-brand-500 dark:bg-white/10 dark:text-brand-400">
-              <Leaf className="h-5 w-5" />
+    <div className="flex min-h-screen bg-neutral-200 dark:bg-ink-900 text-ink-900 dark:text-ink-100 font-sans items-center justify-center p-4">
+      <div className="w-full max-w-[440px]">
+        <GlassCard className="p-8 shadow-sm">
+          <div className="flex flex-col items-center text-center gap-3 mb-8">
+            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-brand-500 text-white shadow-sm">
+              <Leaf className="h-6 w-6" />
             </div>
             <div>
-              <div className="text-sm font-medium">Automatic Sprinkling System</div>
-              <div className="text-xs text-ink-600 dark:text-ink-400">Upload • Predict • Decide • Track</div>
+              <h1 className="text-xl font-bold tracking-tight text-ink-900 dark:text-ink-50">AgriSmart AI</h1>
+              <p className="mt-1 text-sm text-ink-500 dark:text-ink-400">Intelligent Crop Diagnostic Platform</p>
             </div>
           </div>
 
-          <div className="mt-5 grid grid-cols-2 gap-2 rounded-xl border border-black/5 bg-white/60 p-1 shadow-glass backdrop-blur dark:border-white/10 dark:bg-white/10">
+          <div className="mb-6 grid grid-cols-2 gap-2 rounded-xl bg-neutral-200/50 p-1 dark:bg-ink-900/50">
             <button
               type="button"
               onClick={() => setMode('signin')}
-              className={
+              className={cn(
+                "h-10 rounded-lg text-sm font-semibold transition-all",
                 mode === 'signin'
-                  ? 'h-9 rounded-lg bg-brand-500 text-sm font-medium text-white'
-                  : 'h-9 rounded-lg text-sm font-medium text-ink-600 hover:bg-black/5 dark:text-ink-400 dark:hover:bg-white/10'
-              }
+                  ? "bg-white text-brand-700 shadow-sm dark:bg-ink-600 dark:text-brand-400"
+                  : "text-ink-600 hover:text-ink-900 dark:text-ink-400 dark:hover:text-ink-100"
+              )}
             >
               Sign in
             </button>
             <button
               type="button"
               onClick={() => setMode('signup')}
-              className={
+              className={cn(
+                "h-10 rounded-lg text-sm font-semibold transition-all",
                 mode === 'signup'
-                  ? 'h-9 rounded-lg bg-brand-500 text-sm font-medium text-white'
-                  : 'h-9 rounded-lg text-sm font-medium text-ink-600 hover:bg-black/5 dark:text-ink-400 dark:hover:bg-white/10'
-              }
+                  ? "bg-white text-brand-700 shadow-sm dark:bg-ink-600 dark:text-brand-400"
+                  : "text-ink-600 hover:text-ink-900 dark:text-ink-400 dark:hover:text-ink-100"
+              )}
             >
               Sign up
             </button>
           </div>
 
-          <div className="mt-5 grid gap-3">
+          <div className="grid gap-4">
             <div>
-              <label htmlFor="auth-email" className="text-xs font-medium text-ink-600 dark:text-ink-400">Email</label>
+              <label htmlFor="auth-email" className="mb-1.5 block text-sm font-semibold text-ink-900 dark:text-ink-100">Email Address</label>
               <input
                 id="auth-email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 type="email"
                 placeholder="you@example.com"
-                className="mt-2 h-10 w-full rounded-xl border border-black/5 bg-white/70 px-3 text-sm outline-none ring-brand-100 focus:ring-4 dark:border-white/10 dark:bg-white/10"
+                className="h-11 w-full rounded-lg border border-neutral-300 bg-white px-3 text-sm outline-none transition-shadow focus:border-brand-500 focus:ring-4 focus:ring-brand-500/20 dark:border-ink-600/50 dark:bg-ink-900"
               />
             </div>
             <div>
-              <label htmlFor="auth-password" className="text-xs font-medium text-ink-600 dark:text-ink-400">Password</label>
+              <label htmlFor="auth-password" className="mb-1.5 block text-sm font-semibold text-ink-900 dark:text-ink-100">Password</label>
               <input
                 id="auth-password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 type="password"
                 placeholder="Minimum 6 characters"
-                className="mt-2 h-10 w-full rounded-xl border border-black/5 bg-white/70 px-3 text-sm outline-none ring-brand-100 focus:ring-4 dark:border-white/10 dark:bg-white/10"
+                className="h-11 w-full rounded-lg border border-neutral-300 bg-white px-3 text-sm outline-none transition-shadow focus:border-brand-500 focus:ring-4 focus:ring-brand-500/20 dark:border-ink-600/50 dark:bg-ink-900"
               />
             </div>
 
             {error && (
-              <div className="rounded-xl border border-semantic-danger/20 bg-white/70 px-3 py-2 text-sm text-semantic-danger shadow-glass backdrop-blur dark:border-semantic-dangerDark/30 dark:bg-white/10 dark:text-semantic-dangerDark">
+              <div className="rounded-xl border border-semantic-danger/20 bg-semantic-danger/5 px-4 py-3 text-sm font-medium text-semantic-danger dark:border-semantic-dangerDark/30 dark:text-semantic-dangerDark">
                 {error}
               </div>
             )}
 
             {notice && (
-              <div className="rounded-xl border border-black/5 bg-white/70 px-3 py-2 text-sm text-ink-700 shadow-glass backdrop-blur dark:border-white/10 dark:bg-white/10 dark:text-ink-200">
+              <div className="rounded-xl border border-neutral-300 bg-neutral-100 px-4 py-3 text-sm font-medium text-ink-900 dark:border-ink-600/50 dark:bg-ink-800 dark:text-ink-100">
                 {notice}
               </div>
             )}
 
             {resendInfo && (
-              <div className="rounded-xl border border-black/5 bg-white/70 px-3 py-2 text-sm text-ink-700 shadow-glass backdrop-blur dark:border-white/10 dark:bg-white/10 dark:text-ink-200">
+              <div className="rounded-xl border border-neutral-300 bg-neutral-100 px-4 py-3 text-sm font-medium text-ink-900 dark:border-ink-600/50 dark:bg-ink-800 dark:text-ink-100">
                 {resendInfo}
               </div>
             )}
@@ -159,37 +163,30 @@ export default function Auth() {
               type="button"
               disabled={!canSubmit || busy}
               onClick={() => void submit()}
-              className={
+              className={cn(
+                "mt-2 inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl text-sm font-semibold text-white transition-all shadow-sm",
                 !canSubmit || busy
-                  ? 'inline-flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-brand-500/40 text-sm font-medium text-white/70'
-                  : 'inline-flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-brand-500 text-sm font-medium text-white transition hover:bg-brand-700'
-              }
+                  ? "bg-brand-500/50 cursor-not-allowed"
+                  : "bg-brand-500 hover:bg-brand-600 hover:shadow"
+              )}
             >
-              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              {busy && <Loader2 className="h-4 w-4 animate-spin" />}
               {mode === 'signin' ? 'Sign in' : 'Create account'}
             </button>
 
-            {mode === 'signin' ? (
+            {mode === 'signin' && (
               <button
                 type="button"
                 disabled={resendBusy || !email.includes('@')}
                 onClick={() => void resendConfirmation()}
-                className={
-                  resendBusy || !email.includes('@')
-                    ? 'inline-flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-black/5 bg-white/40 text-sm font-medium text-ink-600 dark:border-white/10 dark:bg-white/5 dark:text-ink-400'
-                    : 'inline-flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-black/5 bg-white/70 text-sm font-medium text-ink-700 shadow-glass backdrop-blur transition hover:bg-white/85 dark:border-white/10 dark:bg-white/10 dark:text-ink-200 dark:hover:bg-white/15'
-                }
+                className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-neutral-300 bg-white text-sm font-semibold text-ink-900 transition-colors hover:bg-neutral-100 disabled:opacity-50 dark:border-ink-600/50 dark:bg-ink-900 dark:text-ink-100 dark:hover:bg-ink-800"
               >
-                {resendBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                {resendBusy && <Loader2 className="h-4 w-4 animate-spin" />}
                 Resend confirmation email
               </button>
-            ) : null}
-
-            <div className="text-xs text-ink-600 dark:text-ink-400">
-              By continuing you agree to use this as a demo system. No IoT control is executed.
-            </div>
+            )}
           </div>
-        </div>
+        </GlassCard>
       </div>
     </div>
   )

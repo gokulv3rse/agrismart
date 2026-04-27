@@ -3,6 +3,8 @@ import { AppShell } from '@/components/AppShell'
 import { GlassCard } from '@/components/GlassCard'
 import { supabase } from '@/lib/supabaseClient'
 import type { SprayRecipe } from '@/lib/types'
+import { cn } from '@/lib/utils'
+import { Loader2, Settings2, Save } from 'lucide-react'
 
 type ModelId = 'insect-pesticide/1' | 'fertilizer-sprinkling/2'
 
@@ -98,24 +100,26 @@ export default function Rules() {
 
   return (
     <AppShell>
-      <div className="flex items-start justify-between gap-4">
+      <div className="mb-6 flex flex-col md:flex-row md:items-end justify-between gap-4">
         <div>
-          <div className="text-sm font-medium">Rules / Spray Recipes</div>
-          <div className="mt-1 text-xs text-ink-600 dark:text-ink-400">
-            Map each model class to a spray recommendation, dosage, and minimum confidence.
-          </div>
+          <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
+            Decision Rules <Settings2 className="h-6 w-6 text-brand-500" />
+          </h1>
+          <p className="mt-1 text-ink-600 dark:text-ink-400">Map model outputs to specific spray recommendations and parameters.</p>
         </div>
-        <div className="flex items-center gap-2 rounded-xl border border-black/5 bg-white/60 p-1 shadow-glass backdrop-blur dark:border-white/10 dark:bg-white/10">
+        
+        <div className="inline-flex rounded-lg border border-neutral-300 bg-neutral-200/50 p-1 dark:border-ink-600/50 dark:bg-ink-900/50">
           {MODEL_OPTIONS.map((m) => (
             <button
               key={m.id}
               type="button"
               onClick={() => setModelId(m.id)}
-              className={
+              className={cn(
+                'rounded-md px-4 py-1.5 text-sm font-medium transition-all',
                 modelId === m.id
-                  ? 'h-9 rounded-lg bg-brand-500 px-3 text-sm font-medium text-white'
-                  : 'h-9 rounded-lg px-3 text-sm font-medium text-ink-600 hover:bg-black/5 dark:text-ink-400 dark:hover:bg-white/10'
-              }
+                  ? 'bg-white text-brand-700 shadow-sm dark:bg-ink-600 dark:text-brand-400'
+                  : 'text-ink-600 hover:text-ink-900 dark:text-ink-400 dark:hover:text-ink-100'
+              )}
             >
               {m.label}
             </button>
@@ -124,66 +128,70 @@ export default function Rules() {
       </div>
 
       {error && (
-        <div className="mt-5 rounded-xl2 border border-semantic-danger/20 bg-white/70 px-6 py-5 text-sm text-semantic-danger shadow-glass backdrop-blur dark:border-semantic-dangerDark/30 dark:bg-white/10 dark:text-semantic-dangerDark">
+        <div className="mb-6 rounded-xl border border-semantic-danger/20 bg-semantic-danger/5 px-4 py-3 text-sm font-medium text-semantic-danger dark:border-semantic-dangerDark/30 dark:text-semantic-dangerDark">
           {error}
         </div>
       )}
 
       {busy ? (
-        <div className="mt-5 rounded-xl2 border border-black/5 bg-white/70 px-6 py-5 text-sm text-ink-600 shadow-glass backdrop-blur dark:border-white/10 dark:bg-white/10 dark:text-ink-400">
-          Loading…
+        <div className="flex h-32 flex-col items-center justify-center gap-2 rounded-2xl border border-neutral-300 bg-white/50 dark:border-ink-600/30 dark:bg-ink-900/50">
+          <Loader2 className="h-6 w-6 animate-spin text-ink-400" />
+          <span className="text-sm font-medium text-ink-600">Loading rules...</span>
         </div>
       ) : (
-        <div className="mt-5 grid gap-4">
+        <div className="grid gap-6">
           {mergedRows.map((r) => {
             const dirty = Boolean(editing[r.id])
             return (
-              <GlassCard key={r.id} className="p-5">
-                <div className="flex items-start justify-between gap-4">
+              <GlassCard key={r.id} className="p-6 md:p-8">
+                <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 border-b border-neutral-200 pb-5 mb-5 dark:border-ink-600/50">
                   <div>
-                    <div className="text-sm font-medium">{r.class_label}</div>
-                    <div className="mt-1 text-xs text-ink-600 dark:text-ink-400">Model: {r.model_id}</div>
+                    <h3 className="text-lg font-semibold text-ink-900 dark:text-ink-100 capitalize">{r.class_label.replace(/_/g, ' ')}</h3>
+                    <div className="mt-1 text-sm font-medium text-ink-500 uppercase tracking-wider dark:text-ink-400">{r.model_id.split('/')[0]}</div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <label className="flex items-center gap-2 text-xs text-ink-600 dark:text-ink-400">
+                  <div className="flex items-center gap-4">
+                    <label className="flex items-center gap-2 text-sm font-semibold text-ink-900 cursor-pointer dark:text-ink-100">
                       <input
                         type="checkbox"
                         checked={Boolean(r.enabled)}
                         onChange={(e) => setField(r.id, { enabled: e.target.checked })}
+                        className="h-4 w-4 rounded border-neutral-300 text-brand-600 focus:ring-brand-600 dark:border-ink-600 dark:bg-ink-900"
                       />
-                      Enabled
+                      Rule Enabled
                     </label>
                     <button
                       type="button"
                       disabled={!dirty || savingId === r.id}
                       onClick={() => void save(r.id)}
-                      className={
+                      className={cn(
+                        "inline-flex h-10 items-center justify-center gap-2 rounded-xl px-5 text-sm font-semibold text-white transition-all shadow-sm",
                         !dirty || savingId === r.id
-                          ? 'inline-flex h-9 items-center justify-center rounded-xl bg-brand-500/40 px-3 text-sm font-medium text-white/70'
-                          : 'inline-flex h-9 items-center justify-center rounded-xl bg-brand-500 px-3 text-sm font-medium text-white transition hover:bg-brand-700'
-                      }
+                          ? "bg-brand-500/50 cursor-not-allowed"
+                          : "bg-brand-500 hover:bg-brand-600 hover:shadow"
+                      )}
                     >
+                      {savingId === r.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
                       Save
                     </button>
                   </div>
                 </div>
 
-                <div className="mt-4 grid gap-3 md:grid-cols-2">
+                <div className="grid gap-5 md:grid-cols-2">
                   <div>
-                    <label className="text-xs font-medium text-ink-600 dark:text-ink-400">Action type</label>
+                    <label className="mb-1.5 block text-sm font-semibold text-ink-900 dark:text-ink-100">Action Type</label>
                     <select
                       value={r.action_type ?? 'none'}
                       onChange={(e) => setField(r.id, { action_type: e.target.value })}
-                      className="mt-2 h-10 w-full rounded-xl border border-black/5 bg-white/70 px-3 text-sm outline-none ring-brand-100 focus:ring-4 dark:border-white/10 dark:bg-white/10"
+                      className="h-11 w-full rounded-lg border border-neutral-300 bg-white px-3 text-sm outline-none transition-shadow focus:border-brand-500 focus:ring-4 focus:ring-brand-500/20 dark:border-ink-600/50 dark:bg-ink-900"
                     >
-                      <option value="none">none</option>
-                      <option value="pesticide">pesticide</option>
-                      <option value="fertilizer">fertilizer</option>
+                      <option value="none">None</option>
+                      <option value="pesticide">Pesticide</option>
+                      <option value="fertilizer">Fertilizer</option>
                     </select>
                   </div>
 
                   <div>
-                    <label className="text-xs font-medium text-ink-600 dark:text-ink-400">Min confidence</label>
+                    <label className="mb-1.5 block text-sm font-semibold text-ink-900 dark:text-ink-100">Minimum Confidence (0-1)</label>
                     <input
                       value={String(r.min_confidence ?? 0.6)}
                       onChange={(e) => setField(r.id, { min_confidence: Number(e.target.value) })}
@@ -191,39 +199,39 @@ export default function Rules() {
                       min={0}
                       max={1}
                       step={0.01}
-                      className="mt-2 h-10 w-full rounded-xl border border-black/5 bg-white/70 px-3 text-sm outline-none ring-brand-100 focus:ring-4 dark:border-white/10 dark:bg-white/10"
+                      className="h-11 w-full rounded-lg border border-neutral-300 bg-white px-3 text-sm outline-none transition-shadow focus:border-brand-500 focus:ring-4 focus:ring-brand-500/20 dark:border-ink-600/50 dark:bg-ink-900"
                     />
                   </div>
                 </div>
 
-                <div className="mt-3 grid gap-3">
-                  <div>
-                    <label className="text-xs font-medium text-ink-600 dark:text-ink-400">Recommendation</label>
+                <div className="mt-5 grid gap-5 md:grid-cols-2">
+                  <div className="md:col-span-2">
+                    <label className="mb-1.5 block text-sm font-semibold text-ink-900 dark:text-ink-100">Recommendation</label>
                     <input
                       value={r.recommendation ?? ''}
                       onChange={(e) => setField(r.id, { recommendation: e.target.value })}
                       type="text"
-                      className="mt-2 h-10 w-full rounded-xl border border-black/5 bg-white/70 px-3 text-sm outline-none ring-brand-100 focus:ring-4 dark:border-white/10 dark:bg-white/10"
+                      className="h-11 w-full rounded-lg border border-neutral-300 bg-white px-3 text-sm outline-none transition-shadow focus:border-brand-500 focus:ring-4 focus:ring-brand-500/20 dark:border-ink-600/50 dark:bg-ink-900"
                     />
                   </div>
 
                   <div>
-                    <label className="text-xs font-medium text-ink-600 dark:text-ink-400">Dosage</label>
+                    <label className="mb-1.5 block text-sm font-semibold text-ink-900 dark:text-ink-100">Dosage</label>
                     <input
                       value={r.dosage ?? ''}
                       onChange={(e) => setField(r.id, { dosage: e.target.value })}
                       type="text"
-                      className="mt-2 h-10 w-full rounded-xl border border-black/5 bg-white/70 px-3 text-sm outline-none ring-brand-100 focus:ring-4 dark:border-white/10 dark:bg-white/10"
+                      className="h-11 w-full rounded-lg border border-neutral-300 bg-white px-3 text-sm outline-none transition-shadow focus:border-brand-500 focus:ring-4 focus:ring-brand-500/20 dark:border-ink-600/50 dark:bg-ink-900"
                     />
                   </div>
 
                   <div>
-                    <label className="text-xs font-medium text-ink-600 dark:text-ink-400">Notes</label>
+                    <label className="mb-1.5 block text-sm font-semibold text-ink-900 dark:text-ink-100">Special Notes</label>
                     <input
                       value={r.notes ?? ''}
                       onChange={(e) => setField(r.id, { notes: e.target.value })}
                       type="text"
-                      className="mt-2 h-10 w-full rounded-xl border border-black/5 bg-white/70 px-3 text-sm outline-none ring-brand-100 focus:ring-4 dark:border-white/10 dark:bg-white/10"
+                      className="h-11 w-full rounded-lg border border-neutral-300 bg-white px-3 text-sm outline-none transition-shadow focus:border-brand-500 focus:ring-4 focus:ring-brand-500/20 dark:border-ink-600/50 dark:bg-ink-900"
                     />
                   </div>
                 </div>
@@ -235,4 +243,3 @@ export default function Rules() {
     </AppShell>
   )
 }
-

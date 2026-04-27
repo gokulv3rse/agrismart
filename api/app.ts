@@ -1,5 +1,5 @@
 /**
- * This is a API server
+ * This is the API server
  */
 
 import express, {
@@ -11,6 +11,10 @@ import dotenv from 'dotenv'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import roboflowRoutes from './routes/roboflow.js'
+import schedulesRoutes from './routes/schedules.js'
+import iotRoutes from './routes/iot.js'
+import weatherRoutes from './routes/weather.js'
+import plantsRoutes from './routes/plants.js'
 
 // load env
 {
@@ -24,7 +28,12 @@ app.use(cors())
 app.use(express.json({ limit: '10mb' }))
 app.use(express.urlencoded({ extended: true, limit: '10mb' }))
 
+// API routes
 app.use('/api/roboflow', roboflowRoutes)
+app.use('/api/schedules', schedulesRoutes)
+app.use('/api/iot', iotRoutes)
+app.use('/api/weather', weatherRoutes)
+app.use('/api/plants', plantsRoutes)
 
 /**
  * health

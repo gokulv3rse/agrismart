@@ -8,9 +8,13 @@ export function normalizeRoboflowPredictions(raw: unknown): NormalizedPrediction
     return predictions
       .map((p) => {
         if (!p || typeof p !== 'object') return { label: 'unknown', confidence: 0 }
-        const po = p as { class?: unknown; confidence?: unknown }
+        const po = p as { class?: unknown; label?: unknown; confidence?: unknown }
         return {
-          label: typeof po.class === 'string' ? po.class : String(po.class ?? 'unknown'),
+          // Local model returns { label }, Roboflow returns { class } — support both
+          label:
+            typeof po.label === 'string' ? po.label
+            : typeof po.class === 'string' ? po.class
+            : String((po.label ?? po.class) ?? 'unknown'),
           confidence: typeof po.confidence === 'number' ? po.confidence : Number(po.confidence ?? 0),
         }
       })

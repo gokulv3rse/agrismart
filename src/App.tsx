@@ -5,6 +5,10 @@ import History from "@/pages/History";
 import ResultDetail from "@/pages/ResultDetail";
 import Settings from "@/pages/Settings";
 import Rules from "@/pages/Rules";
+import Plants from "@/pages/Plants";
+import PlantDetail from "@/pages/PlantDetail";
+import Analytics from "@/pages/Analytics";
+import SpraySchedule from "@/pages/SpraySchedule";
 import { RequireAuth } from "@/components/RequireAuth";
 
 export default function App() {
@@ -49,6 +53,38 @@ export default function App() {
           element={
             <RequireAuth>
               <Rules />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/plants"
+          element={
+            <RequireAuth>
+              <Plants />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/plants/:id"
+          element={
+            <RequireAuth>
+              <PlantDetail />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/analytics"
+          element={
+            <RequireAuth>
+              <Analytics />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/schedules"
+          element={
+            <RequireAuth>
+              <SpraySchedule />
             </RequireAuth>
           }
         />

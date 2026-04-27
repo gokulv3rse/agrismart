@@ -5,7 +5,7 @@ export function GlassCard({ children, className }: PropsWithChildren<{ className
   return (
     <div
       className={cn(
-        'rounded-xl2 border border-black/5 bg-white/85 shadow-glass backdrop-blur dark:border-white/10 dark:bg-[rgba(36,41,31,0.85)]',
+        'rounded-xl border border-neutral-300/50 bg-neutral-100 shadow-sm dark:border-ink-600/30 dark:bg-ink-900',
         className,
       )}
     >

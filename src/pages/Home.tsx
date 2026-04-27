@@ -1,106 +1,59 @@
-import { useMemo, useState } from 'react'
-import { UploadCloud, Loader2, Sparkles, ExternalLink } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { UploadCloud, Loader2, Sparkles, ExternalLink, Activity, Thermometer, ShieldCheck, ShieldAlert, Cpu } from 'lucide-react'
 import { AppShell } from '@/components/AppShell'
 import { GlassCard } from '@/components/GlassCard'
+import { WeatherWidget } from '@/components/WeatherWidget'
+import { IoTStatus } from '@/components/IoTStatus'
 import { supabase } from '@/lib/supabaseClient'
+import { apiFetch } from '@/lib/apiFetch'
 import { useAuthStore } from '@/stores/authStore'
-import type { Decision, Diagnosis, InferResponse, SprayRecipe } from '@/lib/types'
-import { getTopTwo, normalizeRoboflowPredictions } from '@/lib/roboflow'
+import type { Decision, Diagnosis, InferResponse, Plant } from '@/lib/types'
 import { Link } from 'react-router-dom'
+import { cn } from '@/lib/utils'
 
-type ModelId = 'insect-pesticide/1' | 'fertilizer-sprinkling/2'
+type ModelId = 'agrismart/1' | 'hf-rice/1' | 'hf-insect/1'
 
 type ModelOption = {
   id: ModelId
   name: string
+  emoji: string
   helper: string
 }
 
 const MODELS: ModelOption[] = [
-  { id: 'insect-pesticide/1', name: 'Pest Model', helper: 'Detect insect pests and show pesticide guidance.' },
-  { id: 'fertilizer-sprinkling/2', name: 'Disease Model', helper: 'Detect plant diseases and show treatment guidance.' },
+  { id: 'agrismart/1',  emoji: '🍅', name: 'Tomato & Potato', helper: 'Detects Tomato and Potato diseases using local MobileNetV2 (94% accuracy).' },
+  { id: 'hf-rice/1',   emoji: '🌾', name: 'Rice Diseases',   helper: 'Detects 6 Rice diseases via HuggingFace model (Blast, Brown Spot, Blight, Smut, NeckBlast).' },
+  { id: 'hf-insect/1', emoji: '🦗', name: 'Pest Detection',  helper: 'Identifies crop insects and pests via HuggingFace classifier.' },
 ]
-
-const RULE_VERSION = 'v2.1.0'
-
-function buildDecision(args: { modelId: ModelId; raw: unknown; recipe: SprayRecipe | null }): Decision {
-  const preds = normalizeRoboflowPredictions(args.raw)
-  const { top, second } = getTopTwo(preds)
-  const margin = second ? top.confidence - second.confidence : 1
-  const isUncertain = top.confidence < 0.6 || margin < 0.08
-
-  if (top.label.toLowerCase() === 'healthy crop' || top.label.toLowerCase() === 'healthy') {
-    return {
-      spray: false,
-      actionType: 'none' as const,
-      label: top.label,
-      confidence: top.confidence,
-      recommendation: 'Healthy',
-      dosage: '-',
-      notes: 'Crop appears healthy.',
-      reason: 'Healthy class detected.',
-      ruleVersion: RULE_VERSION,
-    }
-  }
-
-  if (!args.recipe || !args.recipe.enabled) {
-    return {
-      spray: false,
-      actionType: 'none' as const,
-      label: top.label,
-      confidence: top.confidence,
-      recommendation: 'No product configured',
-      dosage: '-',
-      notes: 'No recipe configured for this class yet.',
-      reason: 'Missing spray recipe mapping.',
-      ruleVersion: RULE_VERSION,
-    }
-  }
-
-  if (isUncertain || top.confidence < args.recipe.min_confidence) {
-    return {
-      spray: false,
-      actionType: 'none' as const,
-      label: top.label,
-      confidence: top.confidence,
-      recommendation: 'Low confidence',
-      dosage: '-',
-      notes: 'Retake a clearer image or try different lighting.',
-      reason: `Low confidence or ambiguous prediction (confidence ${top.confidence.toFixed(2)}).`,
-      ruleVersion: RULE_VERSION,
-    }
-  }
-
-  const actionType =
-    args.recipe.action_type === 'fertilizer'
-      ? ('fertilizer' as const)
-      : args.recipe.action_type === 'pesticide'
-        ? ('pesticide' as const)
-        : ('none' as const)
-
-  return {
-    spray: actionType !== 'none',
-    actionType,
-    label: top.label,
-    confidence: top.confidence,
-    recommendation: args.recipe.recommendation || 'Recommended product (configure)',
-    dosage: args.recipe.dosage || 'Follow label instructions.',
-    notes: args.recipe.notes || '',
-    reason: `Matched recipe for ${top.label}.`,
-    ruleVersion: RULE_VERSION,
-  }
-}
 
 export default function Home() {
   const user = useAuthStore((s) => s.user)
-  const [modelId, setModelId] = useState<ModelId>('insect-pesticide/1')
+  const [modelId, setModelId] = useState<ModelId>('agrismart/1')
   const [file, setFile] = useState<File | null>(null)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [latest, setLatest] = useState<Diagnosis | null>(null)
 
+  // Plant selector
+  const [plants, setPlants] = useState<Plant[]>([])
+  const [selectedPlantId, setSelectedPlantId] = useState<string>('')
+
   const model = useMemo(() => MODELS.find((m) => m.id === modelId)!, [modelId])
+
+  // Fetch user's plants
+  useEffect(() => {
+    const fetchPlants = async () => {
+      try {
+        const res = await apiFetch('/api/plants')
+        const data = await res.json()
+        if (data.success) setPlants(data.plants ?? [])
+      } catch {
+        // Silently fail
+      }
+    }
+    fetchPlants()
+  }, [])
 
   const onPickFile = (f: File | null) => {
     setError(null)
@@ -140,28 +93,31 @@ export default function Home() {
         .createSignedUrl(path, 60 * 5)
       if (signed.error || !signed.data?.signedUrl) throw new Error(signed.error?.message || 'Failed to create signed URL')
 
-      const inferRes = await fetch('/api/roboflow/infer', {
+      // Call the API with auth — server now returns decision
+      const inferRes = await apiFetch('/api/roboflow/infer', {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ modelId, imageUrl: signed.data.signedUrl }),
+        body: JSON.stringify({
+          modelId,
+          imageUrl: signed.data.signedUrl,
+          plantId: selectedPlantId || null,
+        }),
       })
 
       const inferJson = (await inferRes.json()) as InferResponse
       if (!inferJson.success || !inferJson.raw) throw new Error(inferJson.error || 'Inference failed')
 
-      const p = normalizeRoboflowPredictions(inferJson.raw)
-      const { top: t } = getTopTwo(p)
-
-      const recipeRes = await supabase
-        .from('spray_recipes')
-        .select('*')
-        .eq('model_id', modelId)
-        .eq('class_label', t.label)
-        .limit(1)
-        .maybeSingle()
-      if (recipeRes.error) throw new Error(recipeRes.error.message)
-
-      const decision = buildDecision({ modelId, raw: inferJson.raw, recipe: (recipeRes.data as unknown as SprayRecipe) ?? null })
+      // Use the server-side decision
+      const decision: Decision = inferJson.decision ?? {
+        spray: false,
+        actionType: 'none',
+        label: 'unknown',
+        confidence: 0,
+        recommendation: 'Decision engine unavailable',
+        dosage: '-',
+        notes: '',
+        reason: 'Server did not return a decision',
+        ruleVersion: 'fallback',
+      }
 
       const insert = await supabase
         .from('diagnoses')
@@ -172,6 +128,7 @@ export default function Home() {
           image_path: path,
           raw_inference: inferJson.raw,
           decision,
+          plant_id: selectedPlantId || null,
         })
         .select('*')
         .single()
@@ -187,166 +144,283 @@ export default function Home() {
 
   return (
     <AppShell>
-      <div className="grid gap-6 md:grid-cols-2">
-        <GlassCard className="p-5">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <div className="text-sm font-medium">Upload Plant Image</div>
-              <div className="mt-1 text-xs text-ink-600 dark:text-ink-400">JPG/PNG recommended. Keep the leaf area centered.</div>
-            </div>
-            <div className="rounded-xl bg-brand-100 p-2 text-brand-500 dark:bg-white/10 dark:text-brand-400">
-              <UploadCloud className="h-5 w-5" />
-            </div>
-          </div>
+      <div className="mb-6">
+        <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
+        <p className="mt-1 text-ink-600 dark:text-ink-400">Welcome back! Analyze your crops and monitor IoT devices.</p>
+      </div>
 
-          <div className="mt-4 grid gap-3">
+      {/* Top row: Weather + IoT widgets */}
+      <div className="mb-8 grid gap-4 md:grid-cols-2">
+        <WeatherWidget />
+        <IoTStatus />
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-[1.2fr_1fr]">
+        <GlassCard className="p-6 md:p-8 flex flex-col h-full">
+          <div className="mb-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div>
-              <div className="text-xs font-medium text-ink-600 dark:text-ink-400">Model</div>
-              <div className="mt-2 grid grid-cols-2 gap-2">
-                {MODELS.map((m) => (
+              <h2 className="text-xl font-semibold tracking-tight">New Diagnosis</h2>
+              <p className="text-sm text-ink-600 dark:text-ink-400">Select a model and upload a plant leaf image.</p>
+            </div>
+            
+            {/* Model Selector — 3 options */}
+            <div className="inline-flex rounded-lg border border-neutral-300 bg-neutral-200/50 p-1 dark:border-ink-600/50 dark:bg-ink-900/50">
+              {MODELS.map((m) => {
+                const active = m.id === modelId
+                return (
                   <button
                     key={m.id}
                     type="button"
+                    title={m.helper}
                     onClick={() => setModelId(m.id)}
-                    className={
-                      m.id === modelId
-                        ? 'rounded-xl border border-brand-100 bg-brand-100 px-3 py-2 text-left text-sm font-medium text-brand-700 dark:border-white/10 dark:bg-white/10 dark:text-brand-400'
-                        : 'rounded-xl border border-black/5 bg-white/60 px-3 py-2 text-left text-sm font-medium text-ink-600 shadow-glass backdrop-blur transition hover:bg-white/80 dark:border-white/10 dark:bg-white/10 dark:text-ink-400 dark:hover:bg-white/15'
-                    }
+                    className={cn(
+                      'rounded-md px-3 py-1.5 text-sm font-medium transition-all shadow-sm flex items-center gap-1.5',
+                      active
+                        ? 'bg-white text-brand-700 dark:bg-ink-600 dark:text-brand-400'
+                        : 'text-ink-600 hover:text-ink-900 shadow-none dark:text-ink-400 dark:hover:text-ink-100'
+                    )}
                   >
-                    <div className="text-sm">{m.name}</div>
-                    <div className="mt-1 text-xs font-normal text-ink-600/80 dark:text-ink-400/80">{m.helper}</div>
+                    <span>{m.emoji}</span>
+                    <span className="hidden sm:inline">{m.name}</span>
                   </button>
-                ))}
-              </div>
+                )
+              })}
             </div>
+          </div>
 
-            <label className="group relative block cursor-pointer rounded-xl border border-dashed border-black/10 bg-white/50 px-4 py-5 text-sm text-ink-600 shadow-glass backdrop-blur transition hover:bg-white/70 dark:border-white/15 dark:bg-white/5 dark:text-ink-400 dark:hover:bg-white/10">
+          <div className="flex-1 flex flex-col gap-6">
+            {/* Massive Dropzone */}
+            <label className="group flex-1 flex flex-col items-center justify-center min-h-[300px] cursor-pointer rounded-2xl border-2 border-dashed border-neutral-300 bg-neutral-100/50 hover:bg-neutral-200/50 transition-colors p-8 text-center overflow-hidden relative dark:border-ink-600/50 dark:bg-ink-900/30 dark:hover:bg-ink-900/60">
               <input
                 type="file"
                 accept="image/*"
-                className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                className="hidden"
                 onChange={(e) => onPickFile(e.target.files?.[0] ?? null)}
               />
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <div className="font-medium text-ink-900 dark:text-ink-100">Drag & drop or choose file</div>
-                  <div className="mt-1 text-xs text-ink-600 dark:text-ink-400">Max 20MB recommended.</div>
+              {previewUrl ? (
+                <div className="absolute inset-0 bg-black/5 dark:bg-black/40 p-2 flex items-center justify-center">
+                   <img src={previewUrl} alt="Preview" className="max-h-full max-w-full rounded-xl object-contain shadow-lg" />
                 </div>
-                <div className="rounded-xl bg-brand-100 px-3 py-2 text-xs font-medium text-brand-700 dark:bg-white/10 dark:text-brand-400">
-                  Browse
+              ) : (
+                <div className="flex flex-col items-center justify-center gap-4">
+                  <div className="rounded-full bg-brand-100 p-4 text-brand-600 group-hover:scale-110 group-hover:bg-brand-200 transition-all dark:bg-brand-500/20 dark:text-brand-400">
+                    <UploadCloud className="h-8 w-8" />
+                  </div>
+                  <div>
+                    <h3 className="font-semibold text-lg text-ink-900 dark:text-ink-100">Click to upload or drag & drop</h3>
+                    <p className="mt-1 text-sm text-ink-600 dark:text-ink-400">PNG, JPG up to 20MB</p>
+                  </div>
                 </div>
-              </div>
+              )}
             </label>
 
-            {previewUrl && (
-              <div className="overflow-hidden rounded-xl border border-black/5 bg-white/60 shadow-glass dark:border-white/10 dark:bg-white/10">
-                <img src={previewUrl} alt="Preview" className="max-h-[260px] w-full object-cover" />
+            {/* Plant selector & Actions Row */}
+            <div className="flex flex-col md:flex-row gap-4">
+              {plants.length > 0 ? (
+                <div className="flex-1">
+                  <select
+                    value={selectedPlantId}
+                    onChange={(e) => setSelectedPlantId(e.target.value)}
+                    className="h-12 w-full rounded-xl border border-neutral-300 bg-white px-4 text-sm font-medium outline-none transition-shadow focus:border-brand-500 focus:ring-4 focus:ring-brand-500/20 dark:border-ink-600/50 dark:bg-ink-900"
+                  >
+                    <option value="">Link to a Plant (Optional)</option>
+                    {plants.map((p) => (
+                      <option key={p.id} value={p.id}>{p.name} ({p.crop_type})</option>
+                    ))}
+                  </select>
+                </div>
+              ) : <div className="flex-1" />}
+
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={reset}
+                  className="inline-flex h-12 flex-shrink-0 items-center justify-center rounded-xl border border-neutral-300 bg-white px-6 font-semibold text-ink-900 transition-colors hover:bg-neutral-200 dark:border-ink-600/50 dark:bg-ink-900 dark:text-ink-100 dark:hover:bg-ink-600/30"
+                >
+                  Clear
+                </button>
+                <button
+                  type="button"
+                  disabled={!file || busy}
+                  onClick={() => void run()}
+                  className={cn(
+                    "inline-flex h-12 flex-shrink-0 items-center gap-2 rounded-xl px-8 font-semibold text-white transition-all shadow-sm",
+                    !file || busy
+                      ? "bg-brand-500/50 cursor-not-allowed"
+                      : "bg-brand-500 hover:bg-brand-600 hover:shadow"
+                  )}
+                >
+                  {busy ? <Loader2 className="h-5 w-5 animate-spin" /> : <Sparkles className="h-5 w-5" />}
+                  Analyze Image
+                </button>
               </div>
-            )}
+            </div>
 
             {error && (
-              <div className="rounded-xl border border-semantic-danger/20 bg-white/70 px-3 py-2 text-sm text-semantic-danger shadow-glass backdrop-blur dark:border-semantic-dangerDark/30 dark:bg-white/10 dark:text-semantic-dangerDark">
+              <div className="rounded-xl border border-semantic-danger/20 bg-semantic-danger/5 px-4 py-3 text-sm font-medium text-semantic-danger dark:border-semantic-dangerDark/30 dark:text-semantic-dangerDark">
                 {error}
               </div>
             )}
-
-            <div className="mt-1 flex items-center gap-2">
-              <button
-                type="button"
-                disabled={!file || busy}
-                onClick={() => void run()}
-                className={
-                  !file || busy
-                    ? 'inline-flex h-10 flex-1 items-center justify-center gap-2 rounded-xl bg-brand-500/40 px-4 text-sm font-medium text-white/70'
-                    : 'inline-flex h-10 flex-1 items-center justify-center gap-2 rounded-xl bg-brand-500 px-4 text-sm font-medium text-white transition hover:bg-brand-700'
-                }
-              >
-                {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-                Get Prediction
-              </button>
-              <button
-                type="button"
-                onClick={reset}
-                className="inline-flex h-10 items-center justify-center rounded-xl border border-black/5 bg-white/60 px-4 text-sm font-medium text-ink-600 shadow-glass backdrop-blur transition hover:bg-white/80 dark:border-white/10 dark:bg-white/10 dark:text-ink-400 dark:hover:bg-white/15"
-              >
-                Reset
-              </button>
-            </div>
           </div>
         </GlassCard>
 
-        <GlassCard className="p-5">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <div className="text-sm font-medium">Prediction Result</div>
-              <div className="mt-1 text-xs text-ink-600 dark:text-ink-400">Model: {model.name}</div>
-            </div>
-            {latest?.decision?.spray ? (
-              <div className="rounded-xl bg-semantic-success/15 px-3 py-1 text-xs font-medium text-semantic-success dark:bg-white/10">Spray</div>
-            ) : (
-              <div className="rounded-xl bg-black/5 px-3 py-1 text-xs font-medium text-ink-600 dark:bg-white/10 dark:text-ink-400">No spray</div>
-            )}
+        {/* Results Panel */}
+        <GlassCard className="p-6 md:p-8 flex flex-col bg-neutral-100/50 dark:bg-ink-900/50">
+          <div className="mb-6 flex items-center justify-between">
+            <h2 className="text-xl font-semibold tracking-tight">Analysis Report</h2>
+            <Activity className="h-5 w-5 text-ink-400" />
           </div>
 
           {!latest && !busy && (
-            <div className="mt-6 rounded-xl border border-black/5 bg-white/55 p-4 text-sm text-ink-600 shadow-glass backdrop-blur dark:border-white/10 dark:bg-white/10 dark:text-ink-400">
-              Upload an image and click “Get Prediction” to see results.
+            <div className="flex-1 flex flex-col items-center justify-center text-center gap-4 py-12">
+              <div className="rounded-full bg-neutral-200/50 p-4 dark:bg-white/5">
+                <Cpu className="h-8 w-8 text-ink-400" />
+              </div>
+              <div>
+                <p className="font-medium text-ink-900 dark:text-ink-100">No analysis yet</p>
+                <p className="mt-1 text-sm text-ink-600 dark:text-ink-400">Upload a leaf image to generate a diagnostic report.</p>
+              </div>
             </div>
           )}
 
           {busy && (
-            <div className="mt-6 rounded-xl border border-black/5 bg-white/55 p-4 text-sm text-ink-600 shadow-glass backdrop-blur dark:border-white/10 dark:bg-white/10 dark:text-ink-400">
-              Running inference…
+            <div className="flex-1 flex flex-col items-center justify-center text-center gap-4 py-12 animate-pulse">
+              <Loader2 className="h-10 w-10 animate-spin text-brand-500" />
+              <p className="font-medium text-brand-600 dark:text-brand-400">AI is analyzing your crop...</p>
             </div>
           )}
 
           {latest && (
-            <div className="mt-5 grid gap-3">
-              <div className="rounded-xl border border-black/5 bg-white/55 p-4 shadow-glass backdrop-blur dark:border-white/10 dark:bg-white/10">
-                <div className="flex items-start justify-between gap-3">
+            <div className="flex-1 flex flex-col gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+              
+              {/* Primary Label */}
+              <div className="rounded-2xl border border-neutral-300 bg-white p-5 shadow-sm dark:border-ink-600/50 dark:bg-ink-900">
+                <div className="flex items-start justify-between gap-4">
                   <div>
-                    <div className="text-xs font-medium text-ink-600 dark:text-ink-400">Final Label</div>
-                    <div className="mt-1 text-lg font-medium">{latest.decision.label}</div>
+                    <h3 className="text-sm font-medium text-ink-600 dark:text-ink-400">Detected Condition</h3>
+                    <p className="mt-1 text-2xl font-bold tracking-tight text-ink-900 dark:text-white capitalize">
+                      {latest.decision.label.includes('___')
+                        ? latest.decision.label.split('___').map(s => s.replace(/_/g, ' ')).join(' — ')
+                        : latest.decision.label.replace(/_/g, ' ')}
+                    </p>
                   </div>
-                  <div className="text-right">
-                    <div className="text-xs font-medium text-ink-600 dark:text-ink-400">Confidence</div>
-                    <div className="mt-1 text-lg font-medium">{Math.round(latest.decision.confidence * 100)}%</div>
-                  </div>
+                  {/* Badge — 3 states: spray needed / healthy / no recipe configured */}
+                  {latest.decision.spray ? (
+                    <div className="flex items-center gap-1.5 rounded-full bg-semantic-danger/10 px-3 py-1 font-medium text-semantic-danger">
+                      <ShieldAlert className="h-4 w-4" />
+                      Action Required
+                    </div>
+                  ) : latest.decision.recommendation === 'Healthy' ? (
+                    <div className="flex items-center gap-1.5 rounded-full bg-semantic-success/10 px-3 py-1 font-medium text-semantic-success">
+                      <ShieldCheck className="h-4 w-4" />
+                      Healthy
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-1.5 rounded-full bg-amber-500/10 px-3 py-1 font-medium text-amber-600 dark:text-amber-400">
+                      <ShieldAlert className="h-4 w-4" />
+                      Review
+                    </div>
+                  )}
                 </div>
-                <div className="mt-3">
-                  <div className="h-2 overflow-hidden rounded-full bg-black/10 dark:bg-white/10">
+                
+                <div className="mt-5">
+                  <div className="flex justify-between text-xs font-medium mb-2">
+                    <span className="text-ink-600 dark:text-ink-400">Confidence Score</span>
+                    <span className="text-brand-600 dark:text-brand-400">{Math.round(latest.decision.confidence * 100)}%</span>
+                  </div>
+                  <div className="h-2 w-full overflow-hidden rounded-full bg-neutral-200 dark:bg-ink-600/50">
                     <div
-                      className="h-full rounded-full bg-brand-500"
+                      className="h-full rounded-full bg-brand-500 transition-all duration-1000 ease-out"
                       style={{ width: `${Math.max(2, Math.min(100, Math.round(latest.decision.confidence * 100)))}%` }}
                     />
                   </div>
                 </div>
               </div>
 
-              <div className="rounded-xl border border-black/5 bg-white/55 p-4 shadow-glass backdrop-blur dark:border-white/10 dark:bg-white/10">
-                <div className="text-xs font-medium text-ink-600 dark:text-ink-400">Spray Decision</div>
-                <div className="mt-1 text-sm font-medium">{latest.decision.recommendation}</div>
-                <div className="mt-2 text-xs text-ink-600 dark:text-ink-400">Dosage: {latest.decision.dosage}</div>
-                <div className="mt-1 text-xs text-ink-600 dark:text-ink-400">Notes: {latest.decision.notes}</div>
-                <div className="mt-1 text-xs text-ink-600 dark:text-ink-400">Reason: {latest.decision.reason}</div>
+              {/* Recommendation Box */}
+              <div className="rounded-2xl border border-brand-100 bg-brand-50 p-5 dark:border-brand-500/20 dark:bg-brand-500/5">
+                <h3 className="text-sm font-medium text-brand-800 dark:text-brand-300 mb-3">AI Recommendation</h3>
+                
+                <div className="space-y-4 text-sm">
+                  <div>
+                    <span className="font-semibold text-brand-900 dark:text-brand-100 block">{latest.decision.recommendation}</span>
+                  </div>
+                  
+                  {latest.decision.actionType !== 'none' && (
+                    <div className="grid grid-cols-2 gap-4 pt-3 border-t border-brand-200/50 dark:border-brand-500/10">
+                      <div>
+                        <span className="block text-xs font-medium text-brand-700/70 dark:text-brand-300/70">Dosage</span>
+                        <span className="mt-0.5 block font-medium text-brand-900 dark:text-brand-100">{latest.decision.dosage}</span>
+                      </div>
+                      <div>
+                        <span className="block text-xs font-medium text-brand-700/70 dark:text-brand-300/70">Treatment Type</span>
+                        <span className="mt-0.5 block font-medium capitalize text-brand-900 dark:text-brand-100">{latest.decision.actionType}</span>
+                      </div>
+                    </div>
+                  )}
+                  
+                  {latest.decision.notes && (
+                    <div className="pt-3 border-t border-brand-200/50 dark:border-brand-500/10">
+                      <span className="block text-xs font-medium text-brand-700/70 dark:text-brand-300/70">Special Notes</span>
+                      <p className="mt-1 text-brand-900 dark:text-brand-100">{latest.decision.notes}</p>
+                    </div>
+                  )}
+                </div>
               </div>
 
-              <div className="flex items-center justify-between">
-                <Link
-                  to="/history"
-                  className="inline-flex items-center gap-2 rounded-xl border border-black/5 bg-white/60 px-4 py-2 text-sm font-medium text-ink-600 shadow-glass backdrop-blur transition hover:bg-white/80 dark:border-white/10 dark:bg-white/10 dark:text-ink-400 dark:hover:bg-white/15"
-                >
-                  View History
-                  <ExternalLink className="h-4 w-4" />
-                </Link>
-                <Link
-                  to={`/results/${latest.id}`}
-                  className="inline-flex items-center gap-2 rounded-xl bg-brand-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-700"
-                >
-                  Open Result
-                  <ExternalLink className="h-4 w-4" />
-                </Link>
+              {/* Action Links */}
+              <div className="mt-auto pt-4 flex flex-col gap-3">
+                {/* Create Schedule — only when spray is needed */}
+                {latest.decision.spray && (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        const { supabase } = await import('@/lib/supabaseClient')
+                        const { data: { session } } = await supabase.auth.getSession()
+                        if (!session) return
+                        const res = await fetch('/api/schedules', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+                          body: JSON.stringify({
+                            diagnosisId: latest.id,
+                            plantId: latest.plantId ?? null,
+                            productName: latest.decision.recommendation,
+                            dosage: latest.decision.dosage,
+                            intervalDays: 10,
+                            totalApplications: 3,
+                          }),
+                        })
+                        if (res.ok) {
+                          alert('✅ Spray schedule created! View it in the Schedules page.')
+                        } else {
+                          alert('Failed to create schedule. Try again.')
+                        }
+                      } catch {
+                        alert('Error creating schedule.')
+                      }
+                    }}
+                    className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-brand-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-brand-600"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
+                    Create Spray Schedule
+                  </button>
+                )}
+                <div className="flex items-center gap-3">
+                  <Link
+                    to="/history"
+                    className="flex-1 inline-flex items-center justify-center rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-ink-700 border border-neutral-300 shadow-sm transition-colors hover:bg-neutral-50 dark:border-ink-600/50 dark:bg-ink-900 dark:text-ink-300 dark:hover:bg-ink-600/30"
+                  >
+                    View History
+                  </Link>
+                  <Link
+                    to={`/results/${latest.id}`}
+                    className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-ink-900 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-ink-950 dark:bg-brand-500 dark:hover:bg-brand-600"
+                  >
+                    Full Report
+                    <ExternalLink className="h-4 w-4" />
+                  </Link>
+                </div>
               </div>
             </div>
           )}
