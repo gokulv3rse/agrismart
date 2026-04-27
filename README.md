@@ -74,41 +74,23 @@ The system uses **three different AI models** to cover three crop domains:
 
 ## 🏗️ System Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                        BROWSER (React PWA)                      │
-│  Home.tsx  |  SpraySchedule.tsx  |  Analytics.tsx  |  Plants.tsx │
-└────────────────────────┬────────────────────────────────────────┘
-                         │ HTTP (Vite proxy → /api/*)
-┌────────────────────────▼────────────────────────────────────────┐
-│                  Node.js / Express API Server                    │
-│  /api/roboflow/infer  |  /api/schedules  |  /api/plants         │
-│  /api/weather         |  /api/iot/*      |  requireAuth (JWT)   │
-└──────┬─────────────────────────────────────┬────────────────────┘
-       │                                     │
-       ▼                                     ▼
-┌─────────────┐                   ┌──────────────────────┐
-│ Flask Server │                   │   Supabase (Hosted)  │
-│  localhost   │                   │  PostgreSQL + Auth   │
-│    :5001     │                   │  Storage + RLS       │
-│ MobileNetV2  │                   └──────────────────────┘
-│ 7 classes    │
-└─────────────┘
-       │
-       │ (for Rice/Insect models)
-       ▼
-┌──────────────────────────────────────────────────────────┐
-│               HuggingFace Spaces (Cloud)                 │
-│  sanchaikb-fertilizer-model.hf.space  (Rice, 6 classes)  │
-│  SanchaiKB-Insect-Classification-Model.hf.space (5 pests)│
-└──────────────────────────────────────────────────────────┘
-```
+![AgriSmart System Architecture](architecture.png)
+
+**5-Layer Architecture:**
+
+| Layer | Components |
+|---|---|
+| **Client Tier** | React 18 + Vite PWA, Zustand auth store, jsPDF report generator |
+| **API Server Tier** | Node.js 20 + Express, JWT middleware, 5 route modules |
+| **ML Inference Tier** | Local MobileNetV2 (Flask :5001) + 2 HuggingFace Spaces |
+| **Supabase (Cloud)** | PostgreSQL + Auth + Storage + RLS + Decision Engine |
+| **External Services** | OpenWeatherMap API, PlantVillage dataset |
 
 **Inference Flow:**
-1. User uploads image → stored in Supabase Storage bucket
+1. User uploads image → stored in **Supabase Storage** bucket
 2. Signed URL sent to `POST /api/roboflow/infer`
-3. Express server downloads image, forwards to appropriate model endpoint
-4. Predictions returned → Decision Engine queries `spray_recipes` table
+3. Express server downloads image, forwards to the **selected model endpoint**
+4. Raw predictions → **Decision Engine** queries `spray_recipes` table
 5. Full decision object returned to frontend + persisted in `diagnoses` table
 
 ---
