@@ -1,0 +1,704 @@
+\documentclass[12pt,a4paper]{report}
+
+% ── Packages ───────────────────────────────────────────────
+\usepackage[a4paper, margin=2.5cm]{geometry}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{setspace}
+\usepackage{hyperref}
+\usepackage{parskip}
+\usepackage{caption}
+\usepackage{float}
+
+\onehalfspacing
+
+\hypersetup{colorlinks=true, linkcolor=black, urlcolor=blue}
+
+% ── Code listing style ─────────────────────────────────────
+\definecolor{codebg}{RGB}{245,245,245}
+\definecolor{codeframe}{RGB}{200,200,200}
+\definecolor{codecomment}{RGB}{80,120,80}
+\definecolor{codekeyword}{RGB}{0,70,160}
+\definecolor{codestring}{RGB}{160,30,30}
+\definecolor{codenumber}{RGB}{120,120,120}
+
+\lstdefinestyle{agristyle}{
+  backgroundcolor=\color{codebg},
+  frame=single,
+  framerule=0.5pt,
+  rulecolor=\color{codeframe},
+  basicstyle=\ttfamily\footnotesize,
+  keywordstyle=\color{codekeyword}\bfseries,
+  stringstyle=\color{codestring},
+  commentstyle=\color{codecomment}\itshape,
+  numberstyle=\tiny\color{codenumber},
+  numbers=left,
+  numbersep=8pt,
+  stepnumber=1,
+  showstringspaces=false,
+  breaklines=true,
+  breakatwhitespace=false,
+  tabsize=4,
+  captionpos=b,
+  aboveskip=12pt,
+  belowskip=8pt,
+  xleftmargin=18pt,
+}
+
+% Python style
+\lstdefinestyle{python}{
+  style=agristyle,
+  language=Python,
+  morekeywords={torch,nn,F,transforms,models,optim,Path,json,os},
+}
+
+% TypeScript style (treated as JavaScript)
+\lstdefinestyle{typescript}{
+  style=agristyle,
+  language=JavaScript,
+  morekeywords={const,let,type,interface,export,import,from,async,await,
+                Promise,Router,Request,Response,NextFunction,void,string,
+                boolean,number,null,undefined,Record,Array,Set,true,false},
+}
+
+% SQL style
+\lstdefinestyle{sql}{
+  style=agristyle,
+  language=SQL,
+  morekeywords={INSERT,INTO,VALUES,ON,CONFLICT,DO,UPDATE,SET,WHERE,
+                CREATE,TABLE,IF,NOT,EXISTS,REFERENCES,DEFAULT,UUID,TEXT,
+                BOOLEAN,NUMERIC,TIMESTAMPTZ,NOW},
+}
+
+% ──────────────────────────────────────────────────────────
+\begin{document}
+% ──────────────────────────────────────────────────────────
+
+\chapter*{Appendix A --- Source Code (Key Modules)}
+\addcontentsline{toc}{chapter}{Appendix A --- Source Code}
+
+This appendix presents the core source code of the AgriSmart platform across six key modules spanning the ML pipeline, backend API, and data layer. Non-essential boilerplate and import statements are shown where relevant but truncated comments are indicated with \texttt{...} where space requires.
+
+\tableofcontents
+
+\newpage
+
+% ============================================================
+\section*{A.1 \quad ML Inference Server --- \texttt{ml/serve.py}}
+\addcontentsline{toc}{section}{A.1 \quad ML Inference Server (ml/serve.py)}
+% ============================================================
+
+The Flask inference server loads the trained MobileNetV2 checkpoint from disk on startup, then serves predictions via two endpoints: \texttt{POST /predict} (accepts an image URL) and \texttt{POST /predict-upload} (accepts a multipart file). Temperature Scaling ($T = 1.8$) is applied to logits before softmax to prevent overconfident predictions.
+
+\begin{lstlisting}[style=python, caption={Model loading and inference server initialisation (ml/serve.py)}]
+import io, json, os, sys, requests, torch
+import torch.nn.functional as F
+from flask import Flask, jsonify, request
+from flask_cors import CORS
+from PIL import Image
+from torchvision import models, transforms
+import torch.nn as nn
+from pathlib import Path
+
+MODEL_PATH     = Path(__file__).parent / 'outputs' / 'best_model.pth'
+CLASS_MAP_PATH = Path(__file__).parent / 'outputs' / 'class_mapping.json'
+PORT           = int(os.environ.get('INFER_PORT', 5001))
+IMG_SIZE       = 224
+DEVICE = (torch.device('cuda')  if torch.cuda.is_available()  else
+          torch.device('mps')   if torch.backends.mps.is_available() else
+          torch.device('cpu'))
+
+with open(CLASS_MAP_PATH) as f:
+    CLASS_MAPPING: dict[str, str] = json.load(f)   # {"0": "Potato___Early_blight", ...}
+NUM_CLASSES = len(CLASS_MAPPING)
+
+def build_model(arch: str, num_classes: int):
+    if arch == 'mobilenetv2':
+        m = models.mobilenet_v2(weights=None)
+        in_features = m.classifier[1].in_features
+        m.classifier = nn.Sequential(
+            nn.Dropout(0.3),
+            nn.Linear(in_features, 512),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(512, num_classes),
+        )
+    return m
+
+# Load checkpoint once at startup (prevents per-request latency)
+checkpoint   = torch.load(MODEL_PATH, map_location=DEVICE, weights_only=False)
+arch         = checkpoint.get('arch', 'mobilenetv2')
+saved_classes = checkpoint.get('class_names', list(CLASS_MAPPING.values()))
+model = build_model(arch, len(saved_classes))
+model.load_state_dict(checkpoint['model_state_dict'])
+model.to(DEVICE).eval()
+\end{lstlisting}
+
+\begin{lstlisting}[style=python, caption={Temperature-scaled prediction function and Flask endpoints (ml/serve.py)}]
+preprocess = transforms.Compose([
+    transforms.Resize(int(IMG_SIZE * 1.14)),
+    transforms.CenterCrop(IMG_SIZE),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                         std=[0.229, 0.224, 0.225]),
+])
+
+def predict_from_image(img: Image.Image) -> dict:
+    """Run inference with Temperature Scaling (T=1.8) to calibrate
+    overconfident predictions into a realistic 75-95% confidence range."""
+    TEMPERATURE = 1.8
+
+    tensor = preprocess(img.convert('RGB')).unsqueeze(0).to(DEVICE)
+    with torch.no_grad():
+        logits       = model(tensor)
+        scaled_logits = logits / TEMPERATURE     # Temperature scaling
+        probs         = F.softmax(scaled_logits, dim=1).squeeze(0).cpu().tolist()
+
+    predictions = [
+        {'label': saved_classes[i], 'confidence': round(probs[i], 6)}
+        for i in range(len(saved_classes))
+    ]
+    predictions.sort(key=lambda x: x['confidence'], reverse=True)
+    top = predictions[0]
+    return {'top_label': top['label'],
+            'top_confidence': top['confidence'],
+            'predictions': predictions}
+
+app = Flask(__name__)
+CORS(app)
+
+@app.get('/health')
+def health():
+    return jsonify({'status': 'ok', 'classes': len(saved_classes), 'arch': arch})
+
+@app.post('/predict')
+def predict():
+    body      = request.get_json(force=True, silent=True) or {}
+    image_url = body.get('imageUrl', '').strip()
+    if not image_url:
+        return jsonify({'error': 'imageUrl is required'}), 400
+    resp = requests.get(image_url, timeout=15)
+    img  = Image.open(io.BytesIO(resp.content))
+    return jsonify({'success': True, **predict_from_image(img)})
+
+@app.post('/predict-upload')
+def predict_upload():
+    """Accepts multipart file upload (used by Express API server)."""
+    file   = request.files['file']
+    img    = Image.open(file.stream)
+    return jsonify({'success': True, **predict_from_image(img)})
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=PORT, debug=False)
+\end{lstlisting}
+
+\newpage
+
+% ============================================================
+\section*{A.2 \quad Model Training Pipeline --- \texttt{ml/train.py}}
+\addcontentsline{toc}{section}{A.2 \quad Model Training Pipeline (ml/train.py)}
+% ============================================================
+
+The training pipeline implements two-phase transfer learning: Phase 1 trains only the custom classifier head with a frozen backbone; Phase 2 unfreezes the last feature blocks for fine-tuning.  Class-weighted loss and weighted random sampling counter severe class imbalance in the PlantVillage dataset.
+
+\begin{lstlisting}[style=python, caption={Data augmentation pipeline for real-world generalization (ml/train.py)}]
+def get_transforms(img_size: int):
+    """Aggressive augmentation strategy — forces the model to learn disease
+    texture features rather than background colour cues.
+
+    1. RandomResizedCrop (scale 0.4-1.0): partial leaves, locality learning
+    2. RandomPerspective: varied camera angles in the field
+    3. Heavy ColorJitter (hue=0.2): breaks background colour cues
+    4. RandomGrayscale: removes colour, forces texture-only learning
+    5. GaussianBlur: robustness to camera-phone shake/blur
+    6. RandomErasing: occludes random background patches post-ToTensor
+    """
+    train_transform = transforms.Compose([
+        transforms.RandomResizedCrop(img_size, scale=(0.4, 1.0), ratio=(0.75, 1.33)),
+        transforms.RandomHorizontalFlip(),
+        transforms.RandomVerticalFlip(),
+        transforms.RandomRotation(30),
+        transforms.RandomPerspective(distortion_scale=0.3, p=0.4),
+        transforms.ColorJitter(brightness=0.4, contrast=0.4,
+                               saturation=0.4, hue=0.2),
+        transforms.RandomGrayscale(p=0.05),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                             std=[0.229, 0.224, 0.225]),
+        transforms.RandomErasing(p=0.3, scale=(0.02, 0.15),
+                                 ratio=(0.3, 3.3), value='random'),
+        transforms.GaussianBlur(kernel_size=3, sigma=(0.1, 1.5)),
+    ])
+    val_transform = transforms.Compose([
+        transforms.Resize(int(img_size * 1.14)),
+        transforms.CenterCrop(img_size),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                             std=[0.229, 0.224, 0.225]),
+    ])
+    return train_transform, val_transform
+\end{lstlisting}
+
+\begin{lstlisting}[style=python, caption={Two-phase training loop with early stopping (ml/train.py)}]
+def build_model(arch: str, num_classes: int):
+    """Phase 1: backbone frozen. Phase 2: partial unfreeze via unfreeze_backbone()."""
+    if arch == 'mobilenetv2':
+        model = models.mobilenet_v2(weights=models.MobileNet_V2_Weights.IMAGENET1K_V1)
+        for param in model.features.parameters():
+            param.requires_grad = False            # freeze backbone
+        in_features = model.classifier[1].in_features
+        model.classifier = nn.Sequential(
+            nn.Dropout(0.3), nn.Linear(in_features, 512),
+            nn.ReLU(), nn.Dropout(0.2), nn.Linear(512, num_classes),
+        )
+    return model
+
+def unfreeze_backbone(model, arch: str):
+    """Phase 2: unfreeze last 4 MobileNetV2 feature blocks (14-18)."""
+    if arch == 'mobilenetv2':
+        for i, block in enumerate(model.features):
+            if i >= 14:
+                for param in block.parameters():
+                    param.requires_grad = True
+    return model
+
+# --- Training loop (simplified) ---
+for epoch in range(1, args.epochs + 1):
+    if epoch == args.phase1_epochs + 1:          # Phase 2 transition
+        model = unfreeze_backbone(model, args.model)
+        optimizer = optim.Adam(
+            filter(lambda p: p.requires_grad, model.parameters()),
+            lr=args.lr_finetune, weight_decay=1e-4)
+
+    train_loss, train_acc = train_one_epoch(model, train_loader,
+                                            criterion, optimizer, device)
+    val_loss, val_acc, _, _ = evaluate(model, val_loader, criterion, device)
+    scheduler.step(val_loss)
+
+    if val_acc > best_val_acc:                   # Save best checkpoint
+        best_val_acc = val_acc
+        torch.save({
+            'epoch': epoch,
+            'model_state_dict': model.state_dict(),
+            'val_acc': val_acc,
+            'class_names': class_names,
+            'arch': args.model,
+        }, os.path.join(args.output_dir, 'best_model.pth'))
+
+    if epochs_without_improvement >= args.patience:
+        break                                    # Early stopping
+\end{lstlisting}
+
+\newpage
+
+% ============================================================
+\section*{A.3 \quad Multi-Model Inference Router --- \texttt{api/routes/roboflow.ts}}
+\addcontentsline{toc}{section}{A.3 \quad Multi-Model Inference Router (api/routes/roboflow.ts)}
+% ============================================================
+
+This Express router is the central inference orchestrator. It receives a \texttt{POST /api/roboflow/infer} request from the React frontend, routes it to the correct AI model (local Flask or one of two HuggingFace Spaces), normalises the response format, and then calls the \texttt{buildDecision()} engine with the top prediction and a matching \texttt{spray\_recipes} database record.
+
+\begin{lstlisting}[style=typescript, caption={Model registry and HuggingFace response normaliser (api/routes/roboflow.ts)}]
+const LOCAL_INFER_URL = process.env.LOCAL_INFER_URL ?? 'http://localhost:5001/predict-upload'
+const HF_INSECT_URL   = 'https://SanchaiKB-Insect-Classification-Model.hf.space/predict'
+const HF_RICE_URL     = 'https://sanchaikb-fertilizer-model.hf.space/predict'
+
+const ALLOWED_MODELS = new Set([
+  'agrismart/1',   // Local MobileNetV2 -- Tomato + Potato (7 classes)
+  'hf-insect/1',   // HuggingFace EfficientNet-B0 Insect Classifier (5 classes)
+  'hf-rice/1',     // HuggingFace EfficientNet-B0 Rice Disease Model (6 classes)
+])
+
+/** Calls a HuggingFace Space and normalises the 3 possible response formats
+ *  into a unified { predictions: [{label, confidence}] } structure. */
+async function callHFEndpoint(hfUrl, imageUrl) {
+  const { blob, filename } = await fetchImageAsBlob(imageUrl)
+  const form = new FormData()
+  form.append('file', blob, filename)
+
+  const r = await fetch(hfUrl, { method: 'POST', body: form,
+                                  signal: AbortSignal.timeout(45_000) })
+  const data = await r.json()
+
+  // --- Format 1: Rice model returns { scores: [{label, confidence}] }
+  if (Array.isArray(data.scores)) {
+    const preds = data.scores.map(s => ({ label: s.label, confidence: s.confidence }))
+    preds.sort((a, b) => b.confidence - a.confidence)
+    return { predictions: preds, top_label: preds[0]?.label, ...data }
+  }
+
+  // --- Format 2: EfficientNet insect model returns { all_scores: {label: num} }
+  if (data.all_scores && typeof data.all_scores === 'object') {
+    const preds = Object.entries(data.all_scores)
+      .map(([label, confidence]) => ({ label, confidence }))
+      .sort((a, b) => b.confidence - a.confidence)
+    return { predictions: preds, top_label: preds[0]?.label, ...data }
+  }
+
+  // --- Format 3: Legacy top-1 only { prediction, confidence }
+  return {
+    predictions: [{ label: String(data.prediction), confidence: Number(data.confidence) }],
+    top_label: String(data.prediction), ...data,
+  }
+}
+\end{lstlisting}
+
+\begin{lstlisting}[style=typescript, caption={Main inference route with model routing and decision engine (api/routes/roboflow.ts)}]
+router.post('/infer', requireAuth, async (req, res) => {
+  const { modelId, imageUrl, plantId } = req.body
+
+  if (!ALLOWED_MODELS.has(modelId))
+    return res.status(400).json({ error: `Unsupported modelId: ${modelId}` })
+  if (!imageUrl || !/^https?:\/\//.test(imageUrl))
+    return res.status(400).json({ error: 'Invalid imageUrl' })
+
+  let raw
+  // ── Route to correct model ──────────────────────────────────────────
+  if (modelId === 'agrismart/1') {
+    const { blob, filename } = await fetchImageAsBlob(imageUrl)
+    const form = new FormData()
+    form.append('file', blob, filename)
+    const r    = await fetch(LOCAL_INFER_URL, { method: 'POST', body: form })
+    const data = await r.json()
+    raw = { predictions: data.predictions, top_label: data.top_label }
+
+  } else if (modelId === 'hf-insect/1') {
+    raw = await callHFEndpoint(HF_INSECT_URL, imageUrl)
+
+  } else {   // hf-rice/1
+    raw = await callHFEndpoint(HF_RICE_URL, imageUrl)
+  }
+
+  // ── Spray recipe lookup from Supabase ───────────────────────────────
+  const sorted    = [...raw.predictions].sort((a, b) => b.confidence - a.confidence)
+  const top       = sorted[0] ?? { label: 'unknown', confidence: 0 }
+  const supabase  = createSupabaseClient(req.accessToken)
+
+  const { data: recipe } = await supabase
+    .from('spray_recipes')
+    .select('*')
+    .eq('model_id', modelId)
+    .eq('class_label', top.label)
+    .limit(1)
+    .maybeSingle()
+
+  // ── Build decision ──────────────────────────────────────────────────
+  const decision = buildDecision({ modelId, raw: { predictions: raw.predictions }, recipe })
+  res.status(200).json({ success: true, raw, decision, plantId })
+})
+\end{lstlisting}
+
+\newpage
+
+% ============================================================
+\section*{A.4 \quad Decision Engine --- \texttt{api/lib/decisionEngine.ts}}
+\addcontentsline{toc}{section}{A.4 \quad Decision Engine (api/lib/decisionEngine.ts)}
+% ============================================================
+
+The decision engine implements a deterministic three-state rules logic. It receives the raw model output and the matching \texttt{spray\_recipes} database row, and returns a structured \texttt{Decision} object that drives the UI badge, recommendation card, and spray schedule creation.
+
+\begin{lstlisting}[style=typescript, caption={Three-state decision logic — Healthy / Action Required / Review (api/lib/decisionEngine.ts)}]
+export function buildDecision(args: {
+  modelId: string
+  raw: RoboflowRawResponse
+  recipe: SprayRecipe | null
+}): Decision {
+  const preds   = normalizePredictions(args.raw)
+  const { top, second } = getTopTwo(preds)
+  const margin  = second ? top.confidence - second.confidence : 1
+
+  // Low confidence or ambiguous (margin too small between top-2)
+  const isUncertain = top.confidence < 0.6 || margin < 0.08
+
+  // ── State 1: HEALTHY (no action) ────────────────────────────────────
+  // Matches: 'Healthy', 'Healthy Crop', 'Tomato___Healthy', '_healthy', etc.
+  const isHealthy =
+    top.label.toLowerCase() === 'healthy' ||
+    top.label.toLowerCase() === 'healthy crop' ||
+    top.label.toLowerCase().endsWith('___healthy') ||
+    top.label.toLowerCase().endsWith('_healthy')
+
+  if (isHealthy) {
+    return {
+      spray: false, actionType: 'none', label: top.label,
+      confidence: top.confidence,
+      recommendation: 'Healthy',
+      dosage: '-',
+      notes: 'Crop appears healthy. No treatment required.',
+      reason: 'Healthy class detected.', ruleVersion: RULE_VERSION,
+    }
+  }
+
+  // ── State 2: MISSING RECIPE ──────────────────────────────────────────
+  if (!args.recipe || !args.recipe.enabled) {
+    return {
+      spray: false, actionType: 'none', label: top.label,
+      confidence: top.confidence,
+      recommendation: 'No product configured',
+      dosage: '-',
+      notes: 'No recipe configured for this class yet.',
+      reason: 'Missing spray recipe mapping.', ruleVersion: RULE_VERSION,
+    }
+  }
+
+  // ── State 3: LOW CONFIDENCE (review) ────────────────────────────────
+  if (isUncertain || top.confidence < args.recipe.min_confidence) {
+    return {
+      spray: false, actionType: 'none', label: top.label,
+      confidence: top.confidence,
+      recommendation: 'Low confidence',
+      dosage: '-',
+      notes: 'Retake a clearer image or try different lighting.',
+      reason: `Confidence ${top.confidence.toFixed(2)} below threshold.`,
+      ruleVersion: RULE_VERSION,
+    }
+  }
+
+  // ── State 4: ACTION REQUIRED ─────────────────────────────────────────
+  const actionType = args.recipe.action_type === 'fertilizer' ? 'fertilizer'
+                   : args.recipe.action_type === 'pesticide'  ? 'pesticide'
+                   : 'none'
+
+  return {
+    spray: actionType !== 'none',
+    actionType, label: top.label, confidence: top.confidence,
+    recommendation: args.recipe.recommendation,
+    dosage:  args.recipe.dosage || 'Follow label instructions.',
+    notes:   args.recipe.notes  || '',
+    reason:  `Matched recipe for ${top.label}.`,
+    ruleVersion: RULE_VERSION,
+  }
+}
+\end{lstlisting}
+
+\newpage
+
+% ============================================================
+\section*{A.5 \quad JWT Authentication Middleware --- \texttt{api/middleware/auth.ts}}
+\addcontentsline{toc}{section}{A.5 \quad JWT Authentication Middleware (api/middleware/auth.ts)}
+% ============================================================
+
+Every Express route in the AgriSmart API is protected by the \texttt{requireAuth} middleware. It extracts the \texttt{Bearer} token from the \texttt{Authorization} header and validates it against Supabase Auth. If valid, the user ID and token are attached to the request object for downstream use by route handlers.
+
+\begin{lstlisting}[style=typescript, caption={JWT validation middleware for all protected API routes (api/middleware/auth.ts)}]
+import type { Request, Response, NextFunction } from 'express'
+import { createSupabaseClient } from '../lib/supabaseAdmin.js'
+
+export interface AuthenticatedRequest extends Request {
+  userId?:      string   // Supabase user UUID -- set on successful auth
+  accessToken?: string   // Raw JWT -- used to create user-scoped Supabase client
+}
+
+export function requireAuth(
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+): void {
+  const authHeader = req.headers.authorization
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    res.status(401).json({ success: false,
+                           error: 'Missing or invalid Authorization header' })
+    return
+  }
+
+  const token    = authHeader.slice(7)          // Strip "Bearer " prefix
+  const supabase = createSupabaseClient(token)
+
+  supabase.auth.getUser(token).then(({ data, error }) => {
+    if (error || !data.user) {
+      res.status(401).json({ success: false, error: 'Invalid or expired token' })
+      return
+    }
+    // Attach user context to request for downstream route handlers
+    req.userId      = data.user.id
+    req.accessToken = token
+    next()
+  }).catch(() => {
+    res.status(401).json({ success: false, error: 'Authentication failed' })
+  })
+}
+\end{lstlisting}
+
+\newpage
+
+% ============================================================
+\section*{A.6 \quad Spray Schedule API --- \texttt{api/routes/schedules.ts}}
+\addcontentsline{toc}{section}{A.6 \quad Spray Schedule API (api/routes/schedules.ts)}
+% ============================================================
+
+The spray schedules route manages the lifecycle of treatment plans created after each diagnosis. The key endpoint is \texttt{PATCH /:id/complete}, which increments the completed application counter and recalculates the next spray date, automatically marking the schedule as \texttt{completed} once all applications are done.
+
+\begin{lstlisting}[style=typescript, caption={Spray schedule creation and mark-complete endpoints (api/routes/schedules.ts)}]
+// POST / -- Create a new schedule from a diagnosis result
+router.post('/', requireAuth, async (req, res) => {
+  const { diagnosisId, plantId, productName,
+          dosage, intervalDays, totalApplications } = req.body
+
+  const supabase  = createSupabaseClient(req.accessToken)
+  const today     = new Date().toISOString().split('T')[0]
+
+  const { data, error } = await supabase
+    .from('spray_schedules')
+    .insert({
+      diagnosis_id:           diagnosisId,
+      plant_id:               plantId || null,
+      user_id:                req.userId,
+      product_name:           productName,
+      dosage:                 dosage || 'Follow label instructions',
+      interval_days:          intervalDays  || 7,
+      total_applications:     totalApplications || 3,
+      completed_applications: 0,
+      start_date:             today,
+      next_spray_date:        today,
+      status:                 'active',
+    })
+    .select('*').single()
+
+  res.status(201).json({ success: true, schedule: data })
+})
+
+// PATCH /:id/complete -- Mark one spray application as done
+router.patch('/:id/complete', requireAuth, async (req, res) => {
+  const supabase = createSupabaseClient(req.accessToken)
+  const { id }   = req.params
+
+  // Fetch the current schedule to read counters
+  const { data: schedule } = await supabase
+    .from('spray_schedules').select('*')
+    .eq('id', id).eq('user_id', req.userId).single()
+
+  const completedApps = (schedule.completed_applications || 0) + 1
+  const isComplete    = completedApps >= (schedule.total_applications || 3)
+
+  // Recalculate next spray date from today + interval_days
+  const nextDate = new Date()
+  nextDate.setDate(nextDate.getDate() + (schedule.interval_days || 7))
+
+  const { data } = await supabase
+    .from('spray_schedules')
+    .update({
+      completed_applications: completedApps,
+      next_spray_date: isComplete
+        ? schedule.next_spray_date          // frozen if fully complete
+        : nextDate.toISOString().split('T')[0],
+      status: isComplete ? 'completed' : 'active',
+    })
+    .eq('id', id).select('*').single()
+
+  res.status(200).json({ success: true, schedule: data })
+})
+\end{lstlisting}
+
+\newpage
+
+% ============================================================
+\section*{A.7 \quad Master Spray Recipes --- \texttt{supabase/migrations/0008\_master\_recipes.sql}}
+\addcontentsline{toc}{section}{A.7 \quad Master Spray Recipes SQL Migration}
+% ============================================================
+
+The \texttt{spray\_recipes} table is the single source of truth for all 18 treatment configurations across the three AI models. Each row maps a \texttt{(model\_id, class\_label)} pair to a chemical product, dosage, action type, confidence threshold, and special field notes.
+
+\begin{lstlisting}[style=sql, caption={Spray recipes for Rice Disease model --- 6 classes (0008\_master\_recipes.sql, excerpt)}]
+-- Rice Disease model (hf-rice/1) -- EfficientNet-B0, 6 classes
+INSERT INTO spray_recipes
+  (model_id, class_label, enabled, min_confidence,
+   action_type, recommendation, dosage, notes)
+VALUES
+  ('hf-rice/1', 'Blast Disease', true, 0.60,
+   'pesticide',
+   'Tricyclazole (Beam) or Kasugamycin Fungicide',
+   '0.6g Tricyclazole per litre of water; spray every 10-14 days',
+   'Spray at tillering and booting stages. Avoid spraying during
+    rain. Do not apply within 14 days of harvest.'),
+
+  ('hf-rice/1', 'Brown Spot Disease', true, 0.60,
+   'fertilizer',
+   'Mancozeb or Iprodione Fungicide + Potash Fertiliser',
+   '2g Mancozeb per litre; apply 60-90 kg/ha Potash',
+   'Brown spot is often aggravated by potassium deficiency.
+    Apply potash before fungicide for best results.'),
+
+  ('hf-rice/1', 'Bacterial Blight Disease', true, 0.60,
+   'pesticide',
+   'Copper Oxychloride or Streptomycin Bactericide',
+   '3g Copper Oxychloride per litre, spray every 7-10 days',
+   'Remove and destroy infected leaves. Avoid overhead irrigation.
+    Do not reuse water from infected fields. Practice crop rotation.'),
+
+  ('hf-rice/1', 'False Smut Disease', true, 0.55,
+   'pesticide',
+   'Propiconazole or Hexaconazole Fungicide',
+   '1ml Propiconazole per litre, apply at heading stage',
+   'Apply preventively at boot leaf stage. Avoid excessive nitrogen.
+    Infected grains are toxic -- do not use as seed for next season.'),
+
+  ('hf-rice/1', 'NeckBlast', true, 0.65,
+   'pesticide',
+   'Tricyclazole (Beam) or Kasugamycin Fungicide',
+   '0.6g per litre of water, spray at neck emergence',
+   'Critical application window: spray at 50% heading.
+    A second spray 10 days later recommended for heavy infection.'),
+
+  ('hf-rice/1', 'Healthy Crop', true, 0.50,
+   'none', 'No treatment required', '-',
+   'Crop is healthy. Continue standard agronomic practices.')
+ON CONFLICT (model_id, class_label)
+  DO UPDATE SET
+    recommendation = EXCLUDED.recommendation,
+    dosage         = EXCLUDED.dosage,
+    notes          = EXCLUDED.notes,
+    updated_at     = NOW();
+\end{lstlisting}
+
+\begin{lstlisting}[style=sql, caption={Spray recipes for EfficientNet-B0 Insect model --- 5 pest classes (0008\_master\_recipes.sql, excerpt)}]
+-- Insect/Pest model (hf-insect/1) -- EfficientNet-B0, 5 classes
+INSERT INTO spray_recipes
+  (model_id, class_label, enabled, min_confidence,
+   action_type, recommendation, dosage, notes)
+VALUES
+  ('hf-insect/1', 'Rice Stem Borer', true, 0.60,
+   'pesticide',
+   'Chlorpyrifos or Carbofuran Granules',
+   '1.5ml Chlorpyrifos per litre of water, or 1kg Carbofuran
+    granules per acre at transplanting',
+   'Apply granules near plant base. Avoid excessive post-application
+    irrigation. Repeat in 15 days if infestation persists.'),
+
+  ('hf-insect/1', 'Green Leafhopper', true, 0.60,
+   'pesticide',
+   'Imidacloprid or Thiamethoxam Insecticide',
+   '0.5ml Imidacloprid per litre; spray every 7-10 days',
+   'Green leafhoppers are vectors for Rice Tungro Virus.
+    Early treatment is critical. Avoid spraying beneficial insects.'),
+
+  ('hf-insect/1', 'Planthopper', true, 0.60,
+   'pesticide',
+   'Buprofezin or Pymetrozine Insecticide',
+   '1ml Buprofezin per litre; 2 applications 10 days apart',
+   'Drain field before spraying for contact action.
+    Avoid consecutive use of same insecticide class (resistance risk).'),
+
+  ('hf-insect/1', 'Rice Bug', true, 0.55,
+   'pesticide',
+   'Malathion or Lambda-cyhalothrin Insecticide',
+   '2ml Malathion per litre; spray at milk and dough stage',
+   'Critical period: heading to grain fill. Early-morning spraying
+    most effective when bugs are less active.'),
+
+  ('hf-insect/1', 'Rice Leaf Roller', true, 0.55,
+   'pesticide',
+   'Chlorantraniliprole (Coragen) or Flubendiamide',
+   '0.3ml Coragen per litre; apply at egg hatch stage',
+   'Foliar spray targeting young larvae before leaf rolling.
+    Avoid spraying at flowering to protect pollinators.')
+ON CONFLICT (model_id, class_label)
+  DO UPDATE SET
+    recommendation = EXCLUDED.recommendation,
+    dosage         = EXCLUDED.dosage,
+    notes          = EXCLUDED.notes,
+    updated_at     = NOW();
+\end{lstlisting}
+
+% ──────────────────────────────────────────────────────────
+\end{document}
+% ──────────────────────────────────────────────────────────
