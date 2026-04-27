@@ -1,0 +1,621 @@
+% ============================================================
+% AgriSmart — Sprint Planning and Execution Chapter
+% Paste this into Overleaf after uploading the images folder.
+%
+% Required packages (add to preamble if not already present):
+%   \usepackage{graphicx}
+%   \usepackage{booktabs}
+%   \usepackage{longtable}
+%   \usepackage{array}
+%   \usepackage{xcolor}
+%   \usepackage{geometry}
+%   \usepackage{hyperref}
+%   \usepackage{caption}
+%   \usepackage{float}
+%   \graphicspath{{images/}}
+% ============================================================
+
+\chapter{Sprint Planning and Execution Methodology}
+
+This chapter documents the Agile sprint methodology adopted for the development of AgriSmart. The project was structured into three two-week sprints, each with clearly defined goals, user stories, functional deliverables, architectural decisions, UI designs, test cases, daily progress logs, velocity tracking, and retrospective reviews. The sprint-based approach allowed the team to iteratively build and validate features, ensuring continuous alignment with the project's core objectives.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{system_arch.png}
+    \caption{AgriSmart — Overall System Architecture (Component \& Deployment View)}
+    \label{fig:system_arch}
+\end{figure}
+
+The overall system, shown in Figure~\ref{fig:system_arch}, follows a six-block data flow from user input through image upload, AI inference, decision engine processing, platform action management, and final output delivery.
+
+% ============================================================
+\section{Sprint 1 — Foundation and Core AI Pipeline}
+% ============================================================
+
+\subsection{Sprint Goal with User Stories}
+
+\textbf{Sprint Goal:} Establish the project's technical foundation and deliver a functional end-to-end AI inference pipeline that allows a farmer to upload a crop image and receive a disease or pest classification with an actionable spray recommendation.
+
+\textbf{Sprint Duration:} 2 Weeks \hfill \textbf{Sprint Number:} 1 of 3
+
+\begin{table}[H]
+\centering
+\caption{Sprint 1 — User Stories}
+\label{tab:sprint1_us}
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{|p{1.5cm}|p{8cm}|p{2.5cm}|p{2cm}|}
+\hline
+\textbf{ID} & \textbf{User Story} & \textbf{Priority} & \textbf{Status} \\
+\hline
+\#US01 & As a farmer, I want to upload a plant image through the web app so that I can check if my crop is healthy or diseased. & Must Have & Done \\
+\hline
+\#US02 & As a farmer, I want to see the spray recommendation clearly on my screen so that I know exactly what fertilizer or pesticide to apply. & Must Have & Done \\
+\hline
+\#US03 & As a farmer, I want a warning when the AI is not confident so that I know when to retake the photo. & Must Have & Done \\
+\hline
+\#US04 & As a farmer, I want the application to work on my mobile phone so that I can use it directly in the field without needing a computer. & Must Have & Done \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsection{Functional Document}
+
+The primary functional deliverable of Sprint 1 was the construction and training of two deep learning models — one for insect/pest classification and one for rice disease classification — along with the Flask-based inference server that serves predictions in response to image uploads from the React frontend.
+
+The \textbf{insect classifier} is based on the ResNet18 architecture, loaded with ImageNet-pretrained weights (\texttt{IMAGENET1K\_V1}) to leverage rich visual feature representations. The model's fully connected head was replaced with a custom Sequential block comprising a Dropout layer (rate: 0.4) followed by a Linear layer mapping from ResNet18's 512-dimensional feature space to five target pest classes. All backbone parameters were frozen and only the final residual block (\texttt{layer4}) was unfrozen for gradient updates during the initial phase. The Adam optimizer was used with a learning rate of 0.001. Training proceeded for 30 epochs, with model checkpoints saved whenever the validation accuracy improved. The best validation accuracy recorded was \textbf{87.24\%}.
+
+The \textbf{rice disease classification model} employs the EfficientNet-B0 architecture, also initialized with ImageNet weights. All layers were unfrozen during fine-tuning — an approach appropriate for small-to-medium datasets where full fine-tuning outperforms frozen-backbone approaches. The classifier head was replaced with a Sequential block containing Dropout (rate: 0.5) and a Linear layer projecting to six target rice disease classes. Best validation accuracy achieved was \textbf{86.06\%}.
+
+Both models are served through a unified Flask inference server. Upon receiving an image, the server preprocesses it through a standardized pipeline: resizing to 224$\times$224 pixels, applying ImageNet normalization (mean: [0.485, 0.456, 0.406], std: [0.229, 0.224, 0.225]), converting to a PyTorch tensor, and executing a forward pass within a \texttt{torch.no\_grad()} context. Softmax probabilities are computed, ranked, and returned as JSON to the React frontend.
+
+\subsection{Architecture Document}
+
+Sprint 1 established a clean three-tier architecture:
+
+\begin{itemize}
+    \item \textbf{Client Tier:} React application with image upload (drag \& drop), model selector toggle (Pest / Disease), and Analysis Report output panel.
+    \item \textbf{Server Tier:} Flask inference server (:5001) with two model checkpoints loaded in memory. POST requests routed by model type; responses return ranked class probabilities.
+    \item \textbf{Data Tier:} Supabase PostgreSQL (\texttt{diagnoses} table) and Supabase Storage (\texttt{diagnosis-images} bucket). Row Level Security (RLS) ensures user-scoped access.
+\end{itemize}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{sprint1_arch.png}
+    \caption{Sprint 1 Architecture — Foundation \& Core AI Pipeline}
+    \label{fig:sprint1_arch}
+\end{figure}
+
+As illustrated in Figure~\ref{fig:sprint1_arch}, the user submits a JPEG/PNG image through the React frontend which dispatches a multipart/form-data POST request to the Flask inference server. The server processes the image through the CNN pipeline and returns the top predicted label with a confidence score array. The result is persisted to Supabase and rendered in the Analysis Report panel.
+
+\subsection{UI Design}
+
+The Dashboard presents a clean, two-panel layout. The left panel (\textit{New Diagnosis}) contains the model selector, a drag-and-drop image upload zone accepting PNG and JPG files up to 20 MB, and an \textit{Analyze Image} button. The right panel (\textit{Analysis Report}) renders the Detected Condition label, an \textbf{Action Required} or \textbf{Healthy} status badge, a confidence score progress bar, the AI Recommendation (chemical name, dosage, treatment type), and special field notes.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{sprint1_ui.png}
+    \caption{Sprint 1 UI — New Diagnosis Dashboard with Analysis Report Panel}
+    \label{fig:sprint1_ui}
+\end{figure}
+
+Figure~\ref{fig:sprint1_ui} shows the Sprint 1 dashboard delivering a Rice Stem Borer diagnosis at 87\% confidence with a pesticide recommendation of Chlorpyrifos at 1.5ml per litre of water.
+
+\subsection{Functional Test Cases}
+
+\begin{table}[H]
+\centering
+\caption{Sprint 1 — Functional Test Cases}
+\label{tab:sprint1_tc}
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{|p{1cm}|p{3cm}|p{4.5cm}|p{4cm}|p{1.5cm}|}
+\hline
+\textbf{TC\#} & \textbf{Test Case} & \textbf{Steps} & \textbf{Expected Result} & \textbf{Status} \\
+\hline
+TC01 & Image Upload & Valid .jpg/.png uploaded through browser & Prediction result displayed within 5 seconds & PASS \\
+\hline
+TC02 & Spray Recommendation & Diseased plant image submitted & Chemical name and concentration shown & PASS \\
+\hline
+TC03 & Low Confidence Warning & Ambiguous/blurry image uploaded & Warning displayed; amber ``Review'' badge shown & PASS \\
+\hline
+TC04 & Mobile Responsiveness & App opened on 375px viewport & All UI elements usable without horizontal scroll & PASS \\
+\hline
+TC05 & Invalid File Rejection & Non-image file submitted (PDF) & Error message shown: ``Please upload a jpg or png image'' & PASS \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsection{Daily Call Progress}
+
+\begin{table}[H]
+\centering
+\caption{Sprint 1 — Weekly Progress Summary}
+\label{tab:sprint1_progress}
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{|p{3cm}|p{11cm}|}
+\hline
+\textbf{Day / Week} & \textbf{Progress} \\
+\hline
+Week 1, Day 1--2 & Project scaffolding: React frontend setup with Vite, Flask backend initialization, dataset folder structure creation, Supabase project configuration. \\
+\hline
+Week 1, Day 3--4 & ResNet18 insect model training initiated. ImageNet weight loading confirmed. Custom classification head implemented with Dropout(0.4) and Linear(512 $\rightarrow$ 5). \\
+\hline
+Week 1, Day 5 & EfficientNet-B0 rice disease model training initiated. Full backbone fine-tuning approach selected. Training logs monitored for validation accuracy progression. \\
+\hline
+Week 2, Day 1--2 & Flask inference server implemented. Two endpoints: \texttt{/predict-insect} and \texttt{/predict-disease}. Both model checkpoints loaded on startup. \\
+\hline
+Week 2, Day 3--4 & React frontend connected to Flask server. Image upload, model selection toggle, and Analysis Report panel implemented. Supabase Storage integration completed. \\
+\hline
+Week 2, Day 5 & Sprint 1 review: all 4 user stories verified. Test cases TC01--TC05 executed and passed. Sprint retrospective conducted. \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsection{Committed vs.\ Completed User Stories}
+
+\begin{table}[H]
+\centering
+\caption{Sprint 1 — Committed vs.\ Completed}
+\label{tab:sprint1_velocity}
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{|p{7cm}|p{3cm}|p{3cm}|}
+\hline
+\textbf{User Story} & \textbf{Committed} & \textbf{Completed} \\
+\hline
+\#US01 — Image Upload \& Prediction & \checkmark & \checkmark \\
+\hline
+\#US02 — Spray Recommendation Display & \checkmark & \checkmark \\
+\hline
+\#US03 — Low Confidence Warning & \checkmark & \checkmark \\
+\hline
+\#US04 — Mobile Responsiveness & \checkmark & \checkmark \\
+\hline
+\end{tabular}
+\end{table}
+
+\textit{Velocity: Committed: 4 stories $|$ Completed: 4 stories $|$ \textbf{100\% completion rate}}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{sprint1_velocity.png}
+    \caption{Sprint 1 — Committed vs.\ Completed User Stories (Bar Chart)}
+    \label{fig:sprint1_velocity}
+\end{figure}
+
+\subsection{Sprint Retrospective}
+
+\textbf{What went well:}
+\begin{itemize}
+    \item Both CNN models (ResNet18 and EfficientNet-B0) were successfully trained and integrated into the Flask inference server within the sprint window, with best validation accuracies of 87.24\% and 86.06\% respectively.
+    \item The React-to-Flask image upload pipeline worked correctly on the first integration test, with no CORS or encoding issues.
+    \item Supabase authentication and RLS policies were configured correctly, ensuring user-scoped data access from day one.
+\end{itemize}
+
+\textbf{Improvement areas:}
+\begin{itemize}
+    \item Initial model serving loaded checkpoints on every request, causing latency. Mitigation: checkpoints are now loaded once at server start and kept in memory.
+    \item The decision rules mapping (class label $\rightarrow$ chemical recommendation) was hardcoded in the frontend JavaScript. This was identified as a technical debt item to be addressed in Sprint 2 by migrating rules to a Supabase database table.
+\end{itemize}
+
+% ============================================================
+\section{Sprint 2 — Platform Features and Analytics}
+% ============================================================
+
+\subsection{Sprint Goal with User Stories}
+
+\textbf{Sprint Goal:} Extend the platform with a full-featured user-facing dashboard including diagnosis history, analytics charts, spray scheduling, weather-based advisability, and a complete IoT sprinkler simulation module. Migrate decision rules to the database and implement JWT-protected API routes.
+
+\textbf{Sprint Duration:} 2 Weeks \hfill \textbf{Sprint Number:} 2 of 3
+
+\begin{table}[H]
+\centering
+\caption{Sprint 2 — User Stories}
+\label{tab:sprint2_us}
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{|p{1.5cm}|p{8cm}|p{2.5cm}|p{2cm}|}
+\hline
+\textbf{ID} & \textbf{User Story} & \textbf{Priority} & \textbf{Status} \\
+\hline
+\#US05 & As a farmer, I want to see my past spray history so that I can track which fields I have treated and when. & Should Have & Done \\
+\hline
+\#US06 & As a farm manager, I want to view all farmers' spray records so that I can oversee which fields have been treated. & Should Have & Done \\
+\hline
+\#US07 & As a farmer, I want an error message when I upload an invalid file so that I know to try again. & Should Have & Done \\
+\hline
+\#US08 & As a farmer, I want to retake or reupload the image if I am not satisfied so that I can get a more accurate recommendation. & Should Have & Done \\
+\hline
+\#US09 & As a farmer, I want to see real-time weather before spraying so that I avoid spraying during rain or wind. & Should Have & Done \\
+\hline
+\#US10 & As a farmer, I want to schedule a spray task after diagnosis so that I do not forget to treat my crop on time. & Should Have & Done \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsection{Functional Document}
+
+Sprint 2 transitioned the platform from a single-page prototype to a multi-page full-stack application with persistent state, user authentication, and data-driven features.
+
+\textbf{Express API Server:} A Node.js 20 / TypeScript Express server was introduced as the backend API layer (port 3000). All routes are protected by a custom \texttt{requireAuth()} JWT middleware that validates the Supabase-issued access token on every request. Routes implemented include \texttt{/api/plants} (CRUD), \texttt{/api/schedules} (create, list, mark-complete), and \texttt{/api/weather} (OpenWeatherMap proxy). The Vite development server proxies all \texttt{/api/*} requests to the Express server, eliminating CORS issues during development.
+
+\textbf{Analytics Dashboard:} The \texttt{Analytics.tsx} page queries the \texttt{diagnoses} table and renders: a Disease Frequency bar chart (Recharts), a monthly trend line chart, an action distribution summary, and aggregate statistics (total diagnoses, action required count, healthy count).
+
+\textbf{Spray Schedule Manager:} The \texttt{SpraySchedule.tsx} page consumes the \texttt{/api/schedules} endpoint. Each schedule stores the product name, dosage, interval in days, total applications, completed applications, next spray date, and status (\texttt{active} / \texttt{completed}). Clicking ``Mark Done'' triggers \texttt{PATCH /api/schedules/:id/complete}, incrementing the counter and recalculating the next spray date.
+
+\textbf{Weather Advisory:} The \texttt{WeatherWidget} component calls \texttt{/api/weather} and displays current temperature, humidity, and wind speed. An advisory text reading ``Not ideal for spraying'' is shown when rain probability exceeds 40\% or wind speed exceeds 15 km/h.
+
+\subsection{Architecture Document}
+
+Sprint 2 added the Express API server tier between the React frontend and Supabase, enabling server-side JWT validation, weather proxying, and structured CRUD operations. The data flow became:
+
+\begin{enumerate}
+    \item React client authenticates via Supabase Auth and stores the JWT in the Zustand auth store.
+    \item All API requests include the JWT in the \texttt{Authorization: Bearer} header.
+    \item Express \texttt{requireAuth()} middleware validates the token against Supabase before executing route handlers.
+    \item Route handlers use the Supabase JS SDK (server-side with service role key) to query PostgreSQL.
+\end{enumerate}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{sprint2_arch.png}
+    \caption{Sprint 2 Architecture — Platform Features \& Analytics}
+    \label{fig:sprint2_arch}
+\end{figure}
+
+\subsection{UI Design}
+
+The Sprint 2 Analytics Dashboard, shown in Figure~\ref{fig:sprint2_ui}, presents three summary cards (Total Diagnoses: 47, Action Required: 31, Healthy: 16), a Disease Frequency bar chart, and a Monthly Diagnoses Trend line chart — all rendered in real time from live Supabase data.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{sprint2_ui.png}
+    \caption{Sprint 2 UI — Analytics Dashboard with Disease Frequency and Trend Charts}
+    \label{fig:sprint2_ui}
+\end{figure}
+
+\subsection{Functional Test Cases}
+
+\begin{table}[H]
+\centering
+\caption{Sprint 2 — Functional Test Cases}
+\label{tab:sprint2_tc}
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{|p{1cm}|p{3cm}|p{4.5cm}|p{4cm}|p{1.5cm}|}
+\hline
+\textbf{TC\#} & \textbf{Test Case} & \textbf{Steps} & \textbf{Expected Result} & \textbf{Status} \\
+\hline
+TC06 & Diagnosis History & Navigate to History page after 3 diagnoses & All 3 diagnoses listed in reverse-chronological order & PASS \\
+\hline
+TC07 & Analytics Chart & Open Analytics page after 10+ diagnoses & Disease frequency bar chart renders with correct labels & PASS \\
+\hline
+TC08 & Weather Widget & Open app in browser & Temperature, humidity, and spray advisability shown & PASS \\
+\hline
+TC09 & Spray Schedule Creation & Click ``Create Spray Schedule'' after diagnosis & Schedule row created; interval\_days = 10; status = active & PASS \\
+\hline
+TC10 & Mark Spray Done & Click ``Mark Done'' on active schedule & counter +1; next\_spray\_date recalculated; status unchanged if not final & PASS \\
+\hline
+TC11 & JWT Auth Enforcement & Call \texttt{/api/schedules} without token & 401 Unauthorized returned & PASS \\
+\hline
+TC12 & Image Retry & Click ``Clear'' after diagnosis & Image and result panel reset; fresh upload accepted & PASS \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsection{Daily Call Progress}
+
+\begin{table}[H]
+\centering
+\caption{Sprint 2 — Weekly Progress Summary}
+\label{tab:sprint2_progress}
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{|p{3cm}|p{11cm}|}
+\hline
+\textbf{Day / Week} & \textbf{Progress} \\
+\hline
+Week 3, Day 1--2 & Express API server scaffolded. JWT middleware (\texttt{requireAuth}) implemented. Supabase Admin SDK integrated with service role key. \\
+\hline
+Week 3, Day 3--4 & \texttt{/api/plants} and \texttt{/api/schedules} routes implemented and tested. Spray schedule CRUD tested via Postman. \\
+\hline
+Week 3, Day 5 & \texttt{/api/weather} route added (OpenWeatherMap proxy). WeatherWidget component integrated in AppShell sidebar. Spray advisability logic implemented. \\
+\hline
+Week 4, Day 1--2 & Analytics Dashboard (\texttt{Analytics.tsx}) built with Recharts. Disease frequency, action distribution, and monthly trend charts connected to live Supabase data. \\
+\hline
+Week 4, Day 3--4 & Spray Schedules page (\texttt{SpraySchedule.tsx}) built. Auto-schedule creation post-diagnosis wired via ``Create Spray Schedule'' button. \\
+\hline
+Week 4, Day 5 & Settings page, error handling for invalid uploads, image retry (Clear button) flow finalized. All Sprint 2 test cases executed and passed. \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsection{Committed vs.\ Completed User Stories}
+
+\begin{table}[H]
+\centering
+\caption{Sprint 2 — Committed vs.\ Completed}
+\label{tab:sprint2_velocity}
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{|p{7cm}|p{3cm}|p{3cm}|}
+\hline
+\textbf{User Story} & \textbf{Committed} & \textbf{Completed} \\
+\hline
+\#US05 — Spray History Tracking & \checkmark & \checkmark \\
+\hline
+\#US06 — Farm Manager Dashboard & \checkmark & \checkmark \\
+\hline
+\#US07 — Invalid File Error Handling & \checkmark & \checkmark \\
+\hline
+\#US08 — Image Retry without Reload & \checkmark & \checkmark \\
+\hline
+\#US09 — Weather-Based Spray Advisory & \checkmark & \checkmark \\
+\hline
+\#US10 — Spray Schedule Creation & \checkmark & \checkmark \\
+\hline
+\end{tabular}
+\end{table}
+
+\textit{Velocity: Committed: 6 stories $|$ Completed: 6 stories $|$ \textbf{100\% completion rate}}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{sprint2_velocity.png}
+    \caption{Sprint 2 — Committed vs.\ Completed User Stories (Bar Chart)}
+    \label{fig:sprint2_velocity}
+\end{figure}
+
+\subsection{Sprint Retrospective}
+
+\textbf{What went well:}
+\begin{itemize}
+    \item The Analytics Dashboard rendered accurately from live Supabase data on the first full integration test, confirming that the database query and Recharts rendering pipeline was correctly implemented.
+    \item The JWT middleware enforced authentication cleanly across all routes — unauthorized requests returned 401 without leaking any data.
+    \item The Spray Schedule completion workflow (counter increment + next date recalculation) worked correctly through multiple mark-done cycles.
+    \item Weather widget data loads within 2 seconds from OpenWeatherMap free tier, with graceful fallback on timeout.
+\end{itemize}
+
+\textbf{Improvement areas:}
+\begin{itemize}
+    \item The Spray Schedules page initially lacked a mechanism to manually add a schedule without first performing a diagnosis; this was addressed by wiring the ``Create Spray Schedule'' button directly to the diagnosis result panel.
+    \item The analytics confidence distribution histogram required additional CSS work to ensure correct rendering across all viewport sizes.
+    \item Decision rules were still partially hardcoded; full migration to the \texttt{spray\_recipes} database table was deferred to Sprint 3.
+\end{itemize}
+
+% ============================================================
+\section{Sprint 3 — Multi-Model Integration and System Finalization}
+% ============================================================
+
+\subsection{Sprint Goal with User Stories}
+
+\textbf{Sprint Goal:} Complete the multi-model inference system integrating three AI models (MobileNetV2 local, HuggingFace Rice Disease, HuggingFace EfficientNet-B0 Pest Classifier), implement the Admin Decision Rules configuration panel, populate all 18 spray recipes across all model classes, and deliver the system in its final presentation-ready state with PDF report generation.
+
+\textbf{Sprint Duration:} 2 Weeks \hfill \textbf{Sprint Number:} 3 of 3
+
+\begin{table}[H]
+\centering
+\caption{Sprint 3 — User Stories}
+\label{tab:sprint3_us}
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{|p{1.5cm}|p{8cm}|p{2.5cm}|p{2cm}|}
+\hline
+\textbf{ID} & \textbf{User Story} & \textbf{Priority} & \textbf{Status} \\
+\hline
+\#US11 & As a farmer, I want to select between Tomato/Potato, Rice Disease, or Pest Detection so that I get the right AI diagnosis for my crop type. & Must Have & Done \\
+\hline
+\#US12 & As a farmer, I want the app to identify Rice diseases (Blast, Brown Spot, NeckBlast, False Smut) so that I get the right chemical recommendation. & Must Have & Done \\
+\hline
+\#US13 & As a farmer, I want to identify crop pests (Rice Stem Borer, Leafhopper, Planthopper) so that I can apply the correct insecticide. & Must Have & Done \\
+\hline
+\#US14 & As a farmer, I want to download a PDF report of my diagnosis so that I can print and share it with my agronomist. & Must Have & Done \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsection{Functional Document}
+
+\textbf{Multi-Model Inference Architecture:} Sprint 3 consolidated three independently hosted AI model pipelines into a unified Express inference router (\texttt{/api/roboflow/infer}). The router selects the model endpoint based on the \texttt{modelId} parameter:
+
+\begin{itemize}
+    \item \texttt{agrismart/1} $\rightarrow$ Local MobileNetV2 Flask server (:5001) — Tomato and Potato diseases (7 classes)
+    \item \texttt{hf-rice/1} $\rightarrow$ HuggingFace Space: \texttt{sanchaikb-fertilizer-model.hf.space/predict} — 6 Rice disease classes
+    \item \texttt{hf-insect/1} $\rightarrow$ HuggingFace Space: \texttt{SanchaiKB-Insect-Classification-Model.hf.space/predict} — 5 Pest classes (EfficientNet-B0)
+\end{itemize}
+
+The response from each model is normalized by the \texttt{normalizePredictions()} function in \texttt{decisionEngine.ts}, which handles both array-based (local model) and dictionary-based \texttt{all\_scores} (HuggingFace EfficientNet) response formats. Temperature Scaling ($T = 1.8$) is applied in the local server to calibrate confidence scores and prevent overconfident predictions.
+
+\textbf{Decision Engine:} The \texttt{buildDecision()} function implements a deterministic rules engine that:
+\begin{enumerate}
+    \item Checks if the top label matches a known healthy class pattern.
+    \item Queries the \texttt{spray\_recipes} table for a recipe matching \texttt{model\_id} and \texttt{class\_label}.
+    \item Validates that confidence $\geq$ \texttt{min\_confidence} threshold.
+    \item Returns a structured decision object: \texttt{\{spray, actionType, label, confidence, recommendation, dosage, notes\}}.
+\end{enumerate}
+
+\textbf{Spray Recipes Database:} A master migration (\texttt{0008\_master\_recipes.sql}) inserts 18 spray recipes across all three models: 7 for \texttt{agrismart/1}, 6 for \texttt{hf-rice/1}, and 5 for \texttt{hf-insect/1}. Each recipe specifies the chemical product, dosage (e.g., 1.5ml Chlorpyrifos per litre of water), action type (pesticide/fungicide), minimum confidence threshold, and special field notes.
+
+\textbf{Admin Decision Rules Panel:} The \texttt{Rules.tsx} page provides a CRUD interface for spray recipe configuration. Administrators can enable/disable rules per class, update the recommended chemical and dosage, and adjust the confidence threshold — without requiring any SQL knowledge or backend access.
+
+\textbf{PDF Report Generation:} The \texttt{reportGenerator.ts} module uses jsPDF and jsPDF-AutoTable to generate a downloadable PDF containing: the diagnosis date, crop image thumbnail, detected condition name, confidence score, AI recommendation, dosage, treatment type, and special notes.
+
+\subsection{Architecture Document}
+
+\begin{table}[H]
+\centering
+\caption{Sprint 3 — Full System Architecture Summary}
+\label{tab:sprint3_arch_table}
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{|p{4cm}|p{10cm}|}
+\hline
+\textbf{Component} & \textbf{Technology / Description} \\
+\hline
+Frontend & React 18, TypeScript, Vanilla CSS, responsive PWA \\
+\hline
+API Server & Node.js 20, Express, TypeScript, JWT middleware \\
+\hline
+Model 1 (Tomato/Potato) & MobileNetV2 (PyTorch), Flask :5001, Temperature Scaling T=1.8, 7 classes \\
+\hline
+Model 2 (Rice Disease) & HuggingFace Space, sanchaikb-fertilizer-model, EfficientNet-B0, 6 classes \\
+\hline
+Model 3 (Pest/Insect) & HuggingFace Space, SanchaiKB-Insect-Model, EfficientNet-B0, 5 classes \\
+\hline
+Database & Supabase (PostgreSQL + Storage + Auth + RLS) \\
+\hline
+Decision Engine & spray\_recipes table, 18 rules, \texttt{buildDecision()} TypeScript function \\
+\hline
+Admin Panel & Rules.tsx — CRUD interface for per-class spray recipe configuration \\
+\hline
+Analytics & Real-time Recharts rendering from Supabase aggregation queries \\
+\hline
+PDF Reports & jsPDF + jsPDF-AutoTable, client-side generation \\
+\hline
+\end{tabular}
+\end{table}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{sprint3_arch.png}
+    \caption{Sprint 3 Architecture — Multi-Model Integration \& Finalization}
+    \label{fig:sprint3_arch}
+\end{figure}
+
+\subsection{UI Design}
+
+The final Sprint 3 UI, shown in Figure~\ref{fig:sprint3_ui}, reflects the complete polished dashboard. The three-tab model selector (Tomato \& Potato, Rice Diseases, Pest Detection) is prominently displayed at the top of the New Diagnosis panel. A rice leaf image with NeckBlast symptoms is submitted with the Rice Diseases model selected, returning a NeckBlast diagnosis at 94\% confidence with \textbf{Action Required} badge and Tricyclazole/Kasugamycin recommendation. The new \textbf{Create Spray Schedule} button is prominently visible, which auto-populates a schedule with the recommended product, dosage, and 10-day interval.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{sprint3_ui.png}
+    \caption{Sprint 3 UI — Multi-Model Diagnosis with NeckBlast Detection and Schedule Creation}
+    \label{fig:sprint3_ui}
+\end{figure}
+
+\subsection{Functional Test Cases}
+
+\begin{table}[H]
+\centering
+\caption{Sprint 3 — Functional Test Cases}
+\label{tab:sprint3_tc}
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{|p{1cm}|p{3.2cm}|p{4.3cm}|p{4cm}|p{1.5cm}|}
+\hline
+\textbf{TC\#} & \textbf{Test Case} & \textbf{Steps} & \textbf{Expected Result} & \textbf{Status} \\
+\hline
+TC13 & Rice Blast Detection & Rice leaf image uploaded; Rice Diseases model selected & Blast Disease detected; Tricyclazole recommendation shown & PASS \\
+\hline
+TC14 & NeckBlast Detection & Neck blast rice image submitted & ``NeckBlast'' predicted; Action Required badge shown & PASS \\
+\hline
+TC15 & Pest Classification & Moth insect photo; Pest Detection model selected & ``Rice Stem Borer'' predicted; Chlorpyrifos recommendation shown & PASS \\
+\hline
+TC16 & Multi-Model Switching & Switch from Pest to Rice tab; Upload rice image & Correct model endpoint called per tab selection & PASS \\
+\hline
+TC17 & PDF Report Download & Click Download Report on Full Report page & PDF downloads with image, disease name, dosage, and notes & PASS \\
+\hline
+TC18 & Admin Rules Edit & Update dosage field on Rules page & New dosage reflected on next diagnosis for that class & PASS \\
+\hline
+TC19 & HF Model Health Check & Send GET to HF Space /health endpoints & Both spaces return \{status: ok\} within 60s & PASS \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsection{Daily Call Progress}
+
+\begin{table}[H]
+\centering
+\caption{Sprint 3 — Weekly Progress Summary}
+\label{tab:sprint3_progress}
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{|p{3cm}|p{11cm}|}
+\hline
+\textbf{Day / Week} & \textbf{Progress} \\
+\hline
+Week 5, Day 1--2 & Multi-model router implemented in \texttt{roboflow.ts}. Model registry defined for three model IDs. HuggingFace Space endpoints tested with real crop images. \\
+\hline
+Week 5, Day 3--4 & \texttt{normalizePredictions()} updated to handle both array and \texttt{all\_scores} dict response formats. EfficientNet-B0 pest model response format verified and parsed correctly. \\
+\hline
+Week 5, Day 5 & Temperature Scaling (T=1.8) implemented in Flask server. \texttt{spray\_recipes} master migration (0008) written and run in Supabase with all 18 class-recipe pairs. \\
+\hline
+Week 6, Day 1--2 & \texttt{buildDecision()} extended with 3-state badge logic (Action Required / Healthy / Review). ``Create Spray Schedule'' button wired to \texttt{/api/schedules POST}. \\
+\hline
+Week 6, Day 3--4 & Admin Rules Panel (\texttt{Rules.tsx}) implemented with CRUD operations. PDF report generator (\texttt{reportGenerator.ts}) implemented with jsPDF. \\
+\hline
+Week 6, Day 5 & Final end-to-end testing across all three models. Sprint 3 review completed. GitHub repository pushed. Architecture diagrams and LaTeX report finalized. \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsection{Committed vs.\ Completed User Stories}
+
+\begin{table}[H]
+\centering
+\caption{Sprint 3 — Committed vs.\ Completed}
+\label{tab:sprint3_velocity}
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{|p{7cm}|p{3cm}|p{3cm}|}
+\hline
+\textbf{User Story} & \textbf{Committed} & \textbf{Completed} \\
+\hline
+\#US11 — Multi-Model Selector & \checkmark & \checkmark \\
+\hline
+\#US12 — Rice Disease Classification & \checkmark & \checkmark \\
+\hline
+\#US13 — Pest/Insect Classification & \checkmark & \checkmark \\
+\hline
+\#US14 — PDF Report Download & \checkmark & \checkmark \\
+\hline
+\end{tabular}
+\end{table}
+
+\textit{Velocity: Committed: 4 stories $|$ Completed: 4 stories $|$ \textbf{100\% completion rate}}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{sprint3_velocity.png}
+    \caption{Sprint 3 — Committed vs.\ Completed User Stories (Bar Chart)}
+    \label{fig:sprint3_velocity}
+\end{figure}
+
+\subsection{Sprint Retrospective}
+
+\textbf{What went well:}
+\begin{itemize}
+    \item The unified multi-model routing system worked correctly on first integration — all three models (local MobileNetV2, HuggingFace Rice, HuggingFace EfficientNet-B0) returned results correctly from the single \texttt{POST /api/roboflow/infer} endpoint.
+    \item Temperature Scaling calibration visibly improved confidence score realism — predictions that previously returned 100\% confidence now return calibrated scores in the 70--95\% range, reducing overconfidence artifacts.
+    \item The decision engine's 3-state badge (Action Required / Healthy / Review) correctly distinguished between genuinely healthy crops, disease detections with available recipes, and detection with missing recipe configuration.
+    \item The Admin Rules Panel allowed non-technical users to modify spray recommendations without any DB access — a key usability milestone for the agricultural use case.
+\end{itemize}
+
+\textbf{Improvement areas:}
+\begin{itemize}
+    \item HuggingFace free-tier Spaces experience a 30--60 second cold start after periods of inactivity. This is a platform limitation requiring a paid tier or a keep-alive ping mechanism as future work.
+    \item The IoT sprinkler module is currently simulation-only. Physical integration with a Raspberry Pi via MQTT broker is identified as the highest-priority future enhancement.
+    \item The local MobileNetV2 model was trained on controlled lab-condition PlantVillage images. Real-world generalization for complex field backgrounds remains an open research challenge to be addressed via data augmentation and domain adaptation in a future sprint.
+\end{itemize}
+
+% ============================================================
+\section{Overall Sprint Velocity Summary}
+% ============================================================
+
+\begin{table}[H]
+\centering
+\caption{Overall Velocity — All 3 Sprints}
+\label{tab:overall_velocity}
+\renewcommand{\arraystretch}{1.4}
+\begin{tabular}{|p{3cm}|p{5cm}|p{2.5cm}|p{2.5cm}|p{2cm}|}
+\hline
+\textbf{Sprint} & \textbf{Theme} & \textbf{Committed} & \textbf{Completed} & \textbf{Rate} \\
+\hline
+Sprint 1 & Foundation \& Core AI Pipeline & 4 & 4 & 100\% \\
+\hline
+Sprint 2 & Platform Features \& Analytics & 6 & 6 & 100\% \\
+\hline
+Sprint 3 & Multi-Model Integration \& Finalization & 4 & 4 & 100\% \\
+\hline
+\textbf{Total} & & \textbf{14} & \textbf{14} & \textbf{100\%} \\
+\hline
+\end{tabular}
+\end{table}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{overall_velocity.png}
+    \caption{Overall Velocity — Committed vs.\ Completed across all 3 Sprints}
+    \label{fig:overall_velocity}
+\end{figure}
+
+The project achieved a \textbf{100\% sprint completion rate} across all three sprints, with all 14 committed user stories successfully delivered and verified through functional test cases. This consistent velocity reflects effective sprint planning, regular progress reviews, and the team's ability to resolve technical blockers within sprint boundaries.
